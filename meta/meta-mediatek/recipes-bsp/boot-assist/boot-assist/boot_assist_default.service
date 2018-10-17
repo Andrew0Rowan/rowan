@@ -1,0 +1,10 @@
+[Unit]
+Description=BootAssist_Default Service
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=-/bin/sh /usr/share/boot-assist/bootsc -g interactive -p Default_target_finish
+
+[Install]
+WantedBy=default.target

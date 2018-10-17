@@ -1,0 +1,11 @@
+[Unit]
+Description=stp dump Daemon
+After=wmtd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/stp_dump
+
+[Install]
+Alias=stp_dump
+WantedBy=multi-user.target

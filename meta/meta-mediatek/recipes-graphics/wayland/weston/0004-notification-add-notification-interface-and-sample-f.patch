@@ -1,0 +1,2431 @@
+From 6e8d5e20dd7ceff700b0a207dca08e532c07c84a Mon Sep 17 00:00:00 2001
+From: Nelson Liu <nelson.liu@mediatek.com>
+Date: Wed, 7 Sep 2016 10:18:17 +0800
+Subject: [PATCH 04/19] notification: add notification interface and sample for
+ ivi-shell
+
+add notification interface
+Test: test ok
+
+Change-Id: I46627a13994daad3ffb5f5fcf9a7866d4472921f
+Signed-off-by: Nelson Liu <nelson.liu@mediatek.com>
+CR-Id: AUTO00000252
+---
+ Makefile.am                            |  38 +-
+ clients/notification-mtk.c             | 936 +++++++++++++++++++++++++++++++++
+ clients/simple-notification-mtk.c      | 267 ++++++++++
+ ivi-shell/ivi-shell.c                  |  12 +
+ ivi-shell/ivi-shell.h                  |  15 +
+ ivi-shell/notification-panel-ivi-mtk.c | 351 +++++++++++++
+ protocol/notification-mtk.xml          | 191 +++++++
+ src/compositor.c                       |   1 +
+ src/compositor.h                       |   9 +
+ src/notification-backend-mtk.c         | 416 +++++++++++++++
+ 10 files changed, 2231 insertions(+), 5 deletions(-)
+ create mode 100644 clients/notification-mtk.c
+ create mode 100644 clients/simple-notification-mtk.c
+ create mode 100644 ivi-shell/notification-panel-ivi-mtk.c
+ create mode 100644 protocol/notification-mtk.xml
+ create mode 100644 src/notification-backend-mtk.c
+
+diff --git a/Makefile.am b/Makefile.am
+index 00b74e5..f2ae642 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -101,7 +101,8 @@ weston_SOURCES =					\
+ 	shared/timespec-util.h				\
+ 	shared/zalloc.h					\
+ 	shared/platform.h				\
+-	src/weston-egl-ext.h
++	src/weston-egl-ext.h				\
++	src/notification-backend-mtk.c
+ 
+ if SYSTEMD_NOTIFY_SUPPORT
+ module_LTLIBRARIES += systemd-notify.la
+@@ -133,7 +134,9 @@ nodist_weston_SOURCES =					\
+ 	protocol/scaler-protocol.c			\
+ 	protocol/scaler-server-protocol.h		\
+ 	protocol/linux-dmabuf-unstable-v1-protocol.c	\
+-	protocol/linux-dmabuf-unstable-v1-server-protocol.h
++	protocol/linux-dmabuf-unstable-v1-server-protocol.h \
++	protocol/notification-mtk-protocol.c	\
++	protocol/notification-mtk-server-protocol.h
+ 
+ BUILT_SOURCES += $(nodist_weston_SOURCES)
+ 
+@@ -452,7 +455,8 @@ libexec_PROGRAMS +=				\
+ 	weston-desktop-shell			\
+ 	weston-screenshooter			\
+ 	weston-keyboard				\
+-	weston-simple-im
++	weston-simple-im 			\
++	weston-notification-mtk
+ 
+ if ENABLE_IVI_SHELL
+ libexec_PROGRAMS +=				\
+@@ -721,6 +725,16 @@ weston_editor_LDADD = libtoytoolkit.la $(PANGO_LIBS)
+ weston_editor_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS) $(PANGO_CFLAGS)
+ endif
+ 
++demo_clients += weston-simple-notification-mtk
++weston_simple_notification_mtk_SOURCES = 			\
++	clients/simple-notification-mtk.c			\
++	shared/helpers.h
++nodist_weston_simple_notification_mtk_SOURCES =		\
++	protocol/notification-mtk-protocol.c		\
++	protocol/notification-mtk-client-protocol.h
++weston_simple_notification_mtk_LDADD = libtoytoolkit.la
++weston_simple_notification_mtk_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
++
+ weston_keyboard_SOURCES = clients/keyboard.c
+ nodist_weston_keyboard_SOURCES =				\
+ 	protocol/weston-desktop-shell-client-protocol.h		\
+@@ -730,6 +744,13 @@ nodist_weston_keyboard_SOURCES =				\
+ weston_keyboard_LDADD = libtoytoolkit.la
+ weston_keyboard_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
+ 
++weston_notification_mtk_SOURCES = clients/notification-mtk.c
++nodist_weston_notification_mtk_SOURCES =			\
++	protocol/notification-mtk-client-protocol.h	\
++	protocol/notification-mtk-protocol.c
++weston_notification_mtk_LDADD = libtoytoolkit.la
++weston_notification_mtk_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
++
+ weston_simple_im_SOURCES = clients/weston-simple-im.c
+ nodist_weston_simple_im_SOURCES =		\
+ 	protocol/input-method-unstable-v1-protocol.c		\
+@@ -799,7 +820,12 @@ BUILT_SOURCES +=					\
+ 	protocol/ivi-hmi-controller-protocol.c		\
+ 	protocol/ivi-hmi-controller-client-protocol.h	\
+ 	protocol/ivi-application-protocol.c		\
+-	protocol/ivi-application-client-protocol.h
++	protocol/ivi-application-client-protocol.h \
++	protocol/ivi-application-client-protocol.h   \
++	protocol/linux-dmabuf-unstable-v1-protocol.c		\
++	protocol/linux-dmabuf-unstable-v1-client-protocol.h		\
++	protocol/notification-mtk-protocol.c		\
++	protocol/notification-mtk-client-protocol.h
+ 
+ westondatadir = $(datadir)/weston
+ dist_westondata_DATA =				\
+@@ -922,6 +948,7 @@ ivi_shell_la_SOURCES =				\
+ 	ivi-shell/ivi-shell.h			\
+ 	ivi-shell/ivi-shell.c			\
+ 	ivi-shell/input-panel-ivi.c		\
++	ivi-shell/notification-panel-ivi-mtk.c		\
+ 	shared/helpers.h
+ nodist_ivi_shell_la_SOURCES =			\
+ 	protocol/ivi-application-protocol.c		\
+@@ -1382,7 +1409,8 @@ EXTRA_DIST +=					\
+ 	protocol/weston-test.xml		\
+ 	protocol/scaler.xml			\
+ 	protocol/ivi-application.xml		\
+-	protocol/ivi-hmi-controller.xml
++	protocol/ivi-hmi-controller.xml \
++	protocol/notification-mtk.xml
+ 
+ #
+ # manual test modules in tests subdirectory
+diff --git a/clients/notification-mtk.c b/clients/notification-mtk.c
+new file mode 100644
+index 0000000..79ea780
+--- /dev/null
++++ b/clients/notification-mtk.c
+@@ -0,0 +1,936 @@
++/*
++ * Copyright © 2011 Benjamin Franzke
++ * Copyright © 2010 Intel Corporation
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice (including the next
++ * paragraph) shall be included in all copies or substantial portions of the
++ * Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++ * DEALINGS IN THE SOFTWARE.
++ */
++
++#include <config.h>
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdbool.h>
++#include <assert.h>
++#include <unistd.h>
++#include <sys/mman.h>
++#include <signal.h>
++#include <linux/input.h>
++#include <wayland-client.h>
++#include <wayland-cursor.h>
++#include <sys/types.h>
++#include "notification-mtk-client-protocol.h"
++#include "shared/cairo-util.h"
++#include "shared/os-compatibility.h"
++
++struct button {
++	struct wl_list link;
++	uint32_t button_id;
++	char *name;
++};
++
++struct entry {
++	struct wl_list link;
++	struct display *display;
++	struct wl_notification_panel_context *context;
++
++	enum wl_notification_panel_context_entry_type entry_type;
++	char *titel;
++	char *text;
++	struct wl_list button_list;
++
++	int focus_bt;
++};
++
++struct buffer {
++	struct wl_buffer *buffer;
++	void *shm_data;
++	int busy;
++};
++
++struct window {
++	struct display *display;
++	int width, height;
++	struct wl_surface *surface;
++	struct buffer buffers[2];
++	struct buffer *prev_buffer;
++
++	struct wl_notification_panel_surface *panel_surface;
++	struct wl_list entry_list;
++	struct entry *current_entry;
++};
++
++struct display {
++	struct wl_display *display;
++	struct wl_registry *registry;
++	struct wl_compositor *compositor;
++	struct wl_seat *seat;
++	struct wl_pointer *pointer;
++	struct wl_touch *touch;
++	struct wl_keyboard *keyboard;
++	struct wl_shm *shm;
++	struct wl_cursor_theme *cursor_theme;
++	struct wl_cursor *default_cursor;
++	struct wl_surface *cursor_surface;
++	struct wl_output *output;
++	struct wl_notification_panel *notification_panel;
++	struct window *window;
++};
++
++static int running = 1;
++
++static const double panel_width = 640;
++static const double panel_height = 400;
++
++static void
++buffer_release(void *data, struct wl_buffer *buffer)
++{
++	struct buffer *mybuf = data;
++
++	mybuf->busy = 0;
++}
++
++static const struct wl_buffer_listener buffer_listener = {
++	buffer_release
++};
++
++static int
++create_shm_buffer(struct display *display, struct buffer *buffer,
++		  int width, int height, uint32_t format)
++{
++	struct wl_shm_pool *pool;
++	int fd, size, stride;
++	void *data;
++
++	stride = width * 4;
++	size = stride * height;
++
++	fd = os_create_anonymous_file(size);
++	if (fd < 0) {
++		fprintf(stderr, "creating a buffer file for %d B failed: %m\n",
++			size);
++		return -1;
++	}
++
++	data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++	if (data == MAP_FAILED) {
++		fprintf(stderr, "mmap failed: %m\n");
++		close(fd);
++		return -1;
++	}
++
++	pool = wl_shm_create_pool(display->shm, fd, size);
++	buffer->buffer = wl_shm_pool_create_buffer(pool, 0,
++						   width, height,
++						   stride, format);
++	wl_buffer_add_listener(buffer->buffer, &buffer_listener, buffer);
++	wl_shm_pool_destroy(pool);
++	close(fd);
++
++	buffer->shm_data = data;
++
++	return 0;
++}
++
++static struct buffer *
++window_next_buffer(struct window *window)
++{
++	struct buffer *buffer;
++	int ret = 0;
++
++	if (!window->buffers[0].busy)
++		buffer = &window->buffers[0];
++	else if (!window->buffers[1].busy)
++		buffer = &window->buffers[1];
++	else
++		return NULL;
++
++	if (!buffer->buffer) {
++		ret = create_shm_buffer(window->display, buffer,
++					window->width, window->height,
++					WL_SHM_FORMAT_ARGB8888);
++
++		if (ret < 0)
++			return NULL;
++
++		/* paint the padding */
++		memset(buffer->shm_data, 0xff,
++		       window->width * window->height * 4);
++	}
++
++	return buffer;
++}
++
++static void
++draw_button(struct entry *entry,
++	 const struct button *button,
++	 cairo_t *cr,
++	 unsigned int num)
++{
++	struct window *window = entry->display->window;
++	int w = window->width / 4 - 8;
++	int h = window->height / 3 - 40;
++	int bt_num = wl_list_length(&entry->button_list);
++
++	int x = (window->width / bt_num) * num + (window->width / bt_num - w) / 2;
++	int y = window->height - h - 20;
++
++	cairo_text_extents_t extents;
++
++	cairo_save(cr);
++	cairo_rectangle(cr, x, y, w, h);
++	cairo_clip(cr);
++
++	/* Paint frame */
++	cairo_rectangle(cr, x, y, w, h);
++	cairo_set_line_width(cr, 3);
++	cairo_stroke(cr);
++
++	/* Paint text */
++	cairo_text_extents(cr, button->name, &extents);
++
++	cairo_translate(cr, x, y);
++	cairo_translate(cr,
++			(w - extents.width) / 2,
++			(h - extents.y_bearing) / 2);
++	cairo_show_text(cr, button->name);
++
++	cairo_restore(cr);
++}
++
++static void
++redraw_panel(struct window *window)
++{
++	struct button *button;
++	struct buffer *buffer;
++	cairo_surface_t *surface;
++	cairo_t *cr;
++	cairo_text_extents_t extents;
++	void *data = NULL;
++	unsigned int i = 0;
++	int bt_num;
++
++	if(wl_list_empty(&window->entry_list))
++	{
++		wl_notification_panel_commit(window->display->notification_panel, 0);
++		return;
++	}
++
++	buffer = window_next_buffer(window);
++	if (!buffer) {
++		fprintf(stderr,"Failed to create buffer.\n");
++		abort();
++	}
++
++	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
++					     window->width, window->height);
++
++	cr = cairo_create(surface);
++	cairo_rectangle(cr, 0, 0, window->width, window->height);
++	cairo_clip(cr);
++
++	cairo_select_font_face(cr, "sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
++
++	cairo_translate(cr, 0, 0);
++
++	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
++	cairo_set_source_rgba(cr, 0.5, 0.5, 0.5, 0.75);
++	cairo_rectangle(cr, 0, 0, window->width, window->height);
++	cairo_paint(cr);
++
++	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
++
++	/* Paint title */
++	if(window->current_entry->entry_type ==
++			WL_NOTIFICATION_PANEL_CONTEXT_ENTRY_TYPE_NOTICE)
++		cairo_set_source_rgb(cr, 0, 0, 0);
++	else if(window->current_entry->entry_type ==
++			WL_NOTIFICATION_PANEL_CONTEXT_ENTRY_TYPE_WARNING)
++		cairo_set_source_rgb(cr, 1, 1, 0);
++	else if(window->current_entry->entry_type ==
++			WL_NOTIFICATION_PANEL_CONTEXT_ENTRY_TYPE_ERROR)
++		cairo_set_source_rgb(cr, 1, 0, 0);
++	else
++		cairo_set_source_rgb(cr, 0, 0, 0);
++	cairo_set_font_size(cr, 48);
++
++	cairo_save(cr);
++	cairo_rectangle(cr, 0, 0, window->width, window->height / 3);
++	cairo_clip(cr);
++	cairo_text_extents(cr, window->current_entry->titel, &extents);
++	cairo_translate(cr, 0, 0);
++	cairo_translate(cr, 24,
++			(window->height / 3 - extents.y_bearing) / 2);
++	cairo_show_text(cr, window->current_entry->titel);
++
++	cairo_restore(cr);
++
++	/* Paint text */
++	cairo_set_source_rgb(cr, 0, 0, 0);
++	cairo_set_font_size(cr, 20);
++
++	cairo_save(cr);
++	cairo_rectangle(cr, 0, window->height / 3, window->width, window->height / 3);
++	cairo_clip(cr);
++	cairo_text_extents(cr, window->current_entry->text, &extents);
++	cairo_translate(cr, 0, window->height / 3);
++	cairo_translate(cr, 32,
++			(window->height / 3 - extents.y_bearing) / 2);
++	cairo_show_text(cr, window->current_entry->text);
++
++	cairo_restore(cr);
++
++	/* Paint button */
++	bt_num = wl_list_length(&window->current_entry->button_list);
++	wl_list_for_each(button, &window->current_entry->button_list, link) {
++		cairo_set_source_rgb(cr, 0, 0, 0);
++		i++;
++		draw_button(window->current_entry, button, cr, bt_num - i);
++	}
++
++	cairo_destroy(cr);
++
++	/* update image */
++	data = cairo_image_surface_get_data(surface);
++	memcpy(buffer->shm_data, data, window->width * window->height * 4);
++	cairo_surface_destroy(surface);
++
++	wl_surface_attach(window->surface, buffer->buffer, 0, 0);
++	wl_surface_damage(window->surface, 0, 0,
++					  window->width, window->height);
++	wl_surface_commit(window->surface);
++
++	wl_notification_panel_commit(window->display->notification_panel,
++						wl_list_length(&window->entry_list));
++}
++
++static int get_focus_button(struct window *window, wl_fixed_t sx, wl_fixed_t sy)
++{
++	struct entry *entry = window->current_entry;
++	int w = window->width / 4 - 8;
++	int h = window->height / 3 - 40;
++	int bt_num = wl_list_length(&entry->button_list);
++	int i;
++	int focus = -1;
++	int x = wl_fixed_to_int(sx);
++	int y = wl_fixed_to_int(sy);
++	int bt_x, bt_y;
++
++	for(i = 0; i < bt_num; i ++){
++		bt_x = (window->width / bt_num) * i + (window->width / bt_num - w) / 2;
++		bt_y = window->height - h - 20;
++
++		if(((x >= bt_x) && (x <= bt_x + w))
++			&& ((y >= bt_y) && (y<= bt_y + h))){
++			focus = i;
++			break;
++		}
++	}
++
++	return focus;
++}
++
++static void
++pointer_handle_enter(void *data, struct wl_pointer *pointer,
++		     uint32_t serial, struct wl_surface *surface,
++		     wl_fixed_t sx, wl_fixed_t sy)
++{
++	struct display *display = data;
++	struct wl_buffer *buffer;
++	struct wl_cursor *cursor = display->default_cursor;
++	struct wl_cursor_image *image;
++
++	if (cursor) {
++		image = display->default_cursor->images[0];
++		buffer = wl_cursor_image_get_buffer(image);
++		if (!buffer)
++			return;
++		wl_pointer_set_cursor(pointer, serial,
++				      display->cursor_surface,
++				      image->hotspot_x,
++				      image->hotspot_y);
++		wl_surface_attach(display->cursor_surface, buffer, 0, 0);
++		wl_surface_damage(display->cursor_surface, 0, 0,
++				  image->width, image->height);
++		wl_surface_commit(display->cursor_surface);
++	}
++}
++
++static void
++pointer_handle_leave(void *data, struct wl_pointer *pointer,
++		     uint32_t serial, struct wl_surface *surface)
++{
++}
++
++static void
++pointer_handle_motion(void *data, struct wl_pointer *pointer,
++		      uint32_t time, wl_fixed_t sx, wl_fixed_t sy)
++{
++	struct display *display = data;
++	struct window *window = display->window;
++
++	window->current_entry->focus_bt = get_focus_button(window, sx, sy);
++}
++
++static void
++pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
++		      uint32_t serial, uint32_t time, uint32_t button,
++		      uint32_t state)
++{
++	struct display *d = data;
++	struct entry *entry = d->window->current_entry;
++	struct button *bt;
++	int bt_num = wl_list_length(&entry->button_list);
++
++	if ((button != BTN_LEFT) || (state != WL_POINTER_BUTTON_STATE_PRESSED)){
++		return;
++	}
++
++	if(-1 == entry->focus_bt)
++		return;
++
++	wl_list_for_each(bt, &entry->button_list, link) {
++		bt_num --;
++		if(bt_num == entry->focus_bt)
++			wl_notification_panel_context_button_handler(entry->context, bt->button_id);
++	}
++}
++
++static void
++pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
++		    uint32_t time, uint32_t axis, wl_fixed_t value)
++{
++}
++
++static const struct wl_pointer_listener pointer_listener = {
++	pointer_handle_enter,
++	pointer_handle_leave,
++	pointer_handle_motion,
++	pointer_handle_button,
++	pointer_handle_axis,
++};
++
++static void
++touch_handle_down(void *data, struct wl_touch *wl_touch,
++		  uint32_t serial, uint32_t time, struct wl_surface *surface,
++		  int32_t id, wl_fixed_t x_w, wl_fixed_t y_w)
++{
++	struct display *d = data;
++	struct entry *entry = d->window->current_entry;
++	struct button *bt;
++	int bt_num = wl_list_length(&entry->button_list);
++
++	entry->focus_bt = get_focus_button(d->window, x_w, y_w);
++
++	if(-1 == entry->focus_bt)
++		return;
++
++	wl_list_for_each(bt, &entry->button_list, link) {
++		bt_num --;
++		if(bt_num == entry->focus_bt)
++			wl_notification_panel_context_button_handler(entry->context, bt->button_id);
++	}
++
++}
++
++static void
++touch_handle_up(void *data, struct wl_touch *wl_touch,
++		uint32_t serial, uint32_t time, int32_t id)
++{
++}
++
++static void
++touch_handle_motion(void *data, struct wl_touch *wl_touch,
++		    uint32_t time, int32_t id, wl_fixed_t x_w, wl_fixed_t y_w)
++{
++}
++
++static void
++touch_handle_frame(void *data, struct wl_touch *wl_touch)
++{
++}
++
++static void
++touch_handle_cancel(void *data, struct wl_touch *wl_touch)
++{
++}
++
++static const struct wl_touch_listener touch_listener = {
++	touch_handle_down,
++	touch_handle_up,
++	touch_handle_motion,
++	touch_handle_frame,
++	touch_handle_cancel,
++};
++
++static void
++keyboard_handle_keymap(void *data, struct wl_keyboard *keyboard,
++		       uint32_t format, int fd, uint32_t size)
++{
++}
++
++static void
++keyboard_handle_enter(void *data, struct wl_keyboard *keyboard,
++		      uint32_t serial, struct wl_surface *surface,
++		      struct wl_array *keys)
++{
++}
++
++static void
++keyboard_handle_leave(void *data, struct wl_keyboard *keyboard,
++		      uint32_t serial, struct wl_surface *surface)
++{
++}
++
++static void
++keyboard_handle_key(void *data, struct wl_keyboard *keyboard,
++		    uint32_t serial, uint32_t time, uint32_t key,
++		    uint32_t state)
++{
++
++}
++
++static void
++keyboard_handle_modifiers(void *data, struct wl_keyboard *keyboard,
++			  uint32_t serial, uint32_t mods_depressed,
++			  uint32_t mods_latched, uint32_t mods_locked,
++			  uint32_t group)
++{
++}
++
++static const struct wl_keyboard_listener keyboard_listener = {
++	keyboard_handle_keymap,
++	keyboard_handle_enter,
++	keyboard_handle_leave,
++	keyboard_handle_key,
++	keyboard_handle_modifiers,
++};
++
++static void
++seat_handle_capabilities(void *data, struct wl_seat *seat,
++			 enum wl_seat_capability caps)
++{
++	struct display *d = data;
++
++	if ((caps & WL_SEAT_CAPABILITY_POINTER) && !d->pointer) {
++		d->pointer = wl_seat_get_pointer(seat);
++		wl_pointer_add_listener(d->pointer, &pointer_listener, d);
++	} else if (!(caps & WL_SEAT_CAPABILITY_POINTER) && d->pointer) {
++		wl_pointer_destroy(d->pointer);
++		d->pointer = NULL;
++	}
++
++	if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !d->keyboard) {
++		d->keyboard = wl_seat_get_keyboard(seat);
++		wl_keyboard_add_listener(d->keyboard, &keyboard_listener, d);
++	} else if (!(caps & WL_SEAT_CAPABILITY_KEYBOARD) && d->keyboard) {
++		wl_keyboard_destroy(d->keyboard);
++		d->keyboard = NULL;
++	}
++
++	if ((caps & WL_SEAT_CAPABILITY_TOUCH) && !d->touch) {
++		d->touch = wl_seat_get_touch(seat);
++		wl_touch_set_user_data(d->touch, d);
++		wl_touch_add_listener(d->touch, &touch_listener, d);
++	} else if (!(caps & WL_SEAT_CAPABILITY_TOUCH) && d->touch) {
++		wl_touch_destroy(d->touch);
++		d->touch = NULL;
++	}
++}
++
++static const struct wl_seat_listener seat_listener = {
++	seat_handle_capabilities,
++};
++
++static struct window *
++create_window(struct display *display, int width, int height)
++{
++	struct window *window;
++
++	window = calloc(1, sizeof *window);
++	if (!window)
++		return NULL;
++
++	display->window = window;
++
++	window->display = display;
++	window->width = width;
++	window->height = height;
++	window->surface = wl_compositor_create_surface(display->compositor);
++	wl_list_init(&window->entry_list);
++	window->current_entry = NULL;
++	window->panel_surface = wl_notification_panel_get_panel_surface(display->notification_panel,
++						     				window->surface);
++
++	wl_notification_panel_surface_set_toplevel(window->panel_surface,
++					    display->output, 0);
++
++	return window;
++}
++
++static void
++destroy_window(struct window *window)
++{
++	if (window->buffers[0].buffer)
++		wl_buffer_destroy(window->buffers[0].buffer);
++	if (window->buffers[1].buffer)
++		wl_buffer_destroy(window->buffers[1].buffer);
++
++	if (window->panel_surface)
++		wl_notification_panel_surface_destroy(window->panel_surface);
++
++	if (window->surface)
++		wl_surface_destroy(window->surface);
++
++	free(window);
++}
++
++static void
++handle_set_attribute(void *data,
++			  struct wl_notification_panel_context *wl_notification_panel_context,
++			  uint32_t type,
++			  const char *title,
++			  const char *text)
++{
++	struct entry *entry = data;
++
++	entry->entry_type = type;
++
++	if(entry->titel)
++		free(entry->titel);
++	entry->titel = strdup(title);
++
++	if(entry->text)
++		free(entry->text);
++	entry->text = strdup(text);
++
++	wl_notification_panel_context_status_notify(entry->context,
++			WL_NOTIFICATION_PANEL_ACTION_SET_ATTRIBUTE, true);
++}
++
++static void
++handle_set_button(void *data,
++		   struct wl_notification_panel_context *wl_notification_panel_context,
++		   uint32_t button_id,
++		   const char *button_name)
++{
++	struct entry *entry = data;
++	struct button *button;
++
++	if(wl_list_empty(&entry->button_list)){
++		button = calloc(1, sizeof *button);
++		if (button == NULL){
++			wl_notification_panel_context_status_notify(entry->context,
++					WL_NOTIFICATION_PANEL_ACTION_SET_BUTTON, false);
++			return;
++		}
++		button->button_id = button_id;
++		button->name = strdup(button_name);
++		wl_list_insert(&entry->button_list,&button->link);
++		wl_notification_panel_context_status_notify(entry->context,
++				WL_NOTIFICATION_PANEL_ACTION_SET_BUTTON, true);
++		return;
++	}
++
++	wl_list_for_each(button, &entry->button_list, link) {
++		if (button->button_id == button_id){
++			if(button->name)
++				free(button->name);
++			button->name = strdup(button_name);
++			wl_notification_panel_context_status_notify(entry->context,
++					WL_NOTIFICATION_PANEL_ACTION_SET_BUTTON, true);
++			return;
++		}
++	}
++
++	if(wl_list_length(&entry->button_list) >= 4){
++		wl_notification_panel_context_status_notify(entry->context,
++				WL_NOTIFICATION_PANEL_ACTION_SET_BUTTON, false);
++		fprintf(stderr,"Max button number is 4.\n");
++		return;
++	}
++
++	button = calloc(1, sizeof *button);
++	if (button == NULL){
++		wl_notification_panel_context_status_notify(entry->context,
++				WL_NOTIFICATION_PANEL_ACTION_SET_BUTTON, false);
++		return;
++	}
++	button->button_id = button_id;
++	button->name = strdup(button_name);
++	wl_list_insert(&entry->button_list,&button->link);
++	wl_notification_panel_context_status_notify(entry->context,
++			WL_NOTIFICATION_PANEL_ACTION_SET_BUTTON, true);
++
++	return;
++}
++
++static void
++handle_commit(void *data,
++			struct wl_notification_panel_context *wl_notification_panel_context)
++{
++	struct entry *entry = data;
++	struct window *win = entry->display->window;
++
++	win->current_entry = entry;
++
++	redraw_panel(win);
++
++	wl_notification_panel_context_status_notify(entry->context,
++			WL_NOTIFICATION_PANEL_ACTION_COMMIT, true);
++}
++
++static const struct wl_notification_panel_context_listener panel_context_listener = {
++	handle_set_attribute,
++	handle_set_button,
++	handle_commit
++};
++
++static void
++notification_panel_activate(void *data,
++		 struct wl_notification_panel *wl_notification_panel,
++		 struct wl_notification_panel_context *id)
++{
++	struct display *d = data;
++	struct entry *entry;
++
++	entry = calloc(1, sizeof *entry);
++	if (entry == NULL){
++		wl_notification_panel_context_status_notify(id,
++				WL_NOTIFICATION_PANEL_ACTION_ACTIVATE, false);
++		return;
++	}
++	entry->display = d;
++	entry->context = id;
++	entry->focus_bt = -1;
++	wl_list_init(&entry->button_list);
++	wl_notification_panel_context_add_listener(id,
++					     &panel_context_listener,
++					     entry);
++
++	wl_list_insert(&d->window->entry_list, &entry->link);
++
++	wl_notification_panel_context_status_notify(id,
++				WL_NOTIFICATION_PANEL_ACTION_ACTIVATE, true);
++}
++
++static void
++notification_panel_deactivate(void *data,
++		   struct wl_notification_panel *wl_notification_panel,
++		   struct wl_notification_panel_context *context)
++{
++	struct display *d = data;
++	struct entry *entry, *next;
++	struct button *button, *button_next;
++
++	if(wl_list_empty(&d->window->entry_list)){
++		wl_notification_panel_context_status_notify(context,
++				WL_NOTIFICATION_PANEL_ACTION_DEACTIVATE, false);
++		return;
++	}
++
++	wl_list_for_each_safe(entry, next,
++			      &d->window->entry_list, link) {
++		if (entry->context == context)
++			break;
++	}
++
++	if (entry->context != context){
++		wl_notification_panel_context_status_notify(context,
++				WL_NOTIFICATION_PANEL_ACTION_DEACTIVATE, false);
++		return;
++	}
++
++	wl_list_remove(&entry->link);
++
++	wl_list_for_each_safe(button, button_next, &entry->button_list, link){
++		wl_list_remove(&button->link);
++		if (button->name != NULL)
++			free(button->name);
++		free(button);
++	}
++
++	if (entry->titel != NULL)
++		free(entry->titel);
++	if (entry->text != NULL)
++		free(entry->text);
++
++	free(entry);
++
++	wl_list_for_each_safe(entry, next,
++			      &d->window->entry_list, link) {
++			d->window->current_entry = entry;
++			break;
++	}
++
++	redraw_panel(d->window);
++
++	wl_notification_panel_context_status_notify(context,
++			WL_NOTIFICATION_PANEL_ACTION_DEACTIVATE, true);
++}
++
++static const struct wl_notification_panel_listener notification_panel_listener = {
++	notification_panel_activate,
++	notification_panel_deactivate
++};
++
++static void
++registry_handle_global(void *data, struct wl_registry *registry,
++		       uint32_t id, const char *interface, uint32_t version)
++{
++	struct display *d = data;
++
++	if (strcmp(interface, "wl_compositor") == 0) {
++		d->compositor = wl_registry_bind(registry,
++					 			id, &wl_compositor_interface, 1);
++	} else if (strcmp(interface, "wl_shm") == 0) {
++		d->shm = wl_registry_bind(registry, id,
++					  &wl_shm_interface, 1);
++		d->cursor_theme = wl_cursor_theme_load(NULL, 32, d->shm);
++		if (!d->cursor_theme) {
++			fprintf(stderr, "unable to load default theme\n");
++			return;
++		}
++		d->default_cursor =
++			wl_cursor_theme_get_cursor(d->cursor_theme, "grabbing");
++		if (!d->default_cursor) {
++			fprintf(stderr, "unable to load default left pointer\n");
++			// TODO: abort ?
++		}
++	} else if (strcmp(interface, "wl_seat") == 0) {
++		d->seat = wl_registry_bind(registry, id,
++					   &wl_seat_interface, 1);
++		wl_seat_add_listener(d->seat, &seat_listener, d);
++	} else if (strcmp(interface, "wl_output") == 0) {
++		d->output = wl_registry_bind(registry, id,
++						&wl_output_interface, 2);
++	} else if (!strcmp(interface, "wl_notification_panel")) {
++		d->notification_panel = wl_registry_bind(registry, id,
++				     &wl_notification_panel_interface, 1);
++		wl_notification_panel_add_listener(d->notification_panel,
++						&notification_panel_listener, d);
++	}
++}
++
++static void
++registry_handle_global_remove(void *data, struct wl_registry *registry,
++			      uint32_t name)
++{
++}
++
++static const struct wl_registry_listener registry_listener = {
++	registry_handle_global,
++	registry_handle_global_remove
++};
++
++static struct display *
++create_display(void)
++{
++	struct display *display;
++
++	display = malloc(sizeof *display);
++	if (display == NULL) {
++		fprintf(stderr, "out of memory\n");
++		exit(1);
++	}
++	display->display = wl_display_connect(NULL);
++	assert(display->display);
++
++	display->registry = wl_display_get_registry(display->display);
++	wl_registry_add_listener(display->registry,
++				 &registry_listener, display);
++	wl_display_roundtrip(display->display);
++	if (display->shm == NULL) {
++		fprintf(stderr, "No wl_shm global\n");
++		exit(1);
++	}
++
++	wl_display_roundtrip(display->display);
++
++	display->cursor_surface =
++		wl_compositor_create_surface(display->compositor);
++
++	return display;
++}
++
++static void
++destroy_display(struct display *display)
++{
++	if (display->shm)
++		wl_shm_destroy(display->shm);
++
++	if (display->compositor)
++		wl_compositor_destroy(display->compositor);
++
++	if (display->output)
++		wl_output_destroy(display->output);
++
++	if (display->seat)
++		wl_seat_destroy(display->seat);
++
++	if (display->notification_panel)
++		wl_notification_panel_destroy(display->notification_panel);
++
++	if (display->cursor_surface)
++		wl_surface_destroy(display->cursor_surface);
++
++	if (display->cursor_theme)
++		wl_cursor_theme_destroy(display->cursor_theme);
++
++	wl_registry_destroy(display->registry);
++	wl_display_flush(display->display);
++	wl_display_disconnect(display->display);
++	free(display);
++}
++
++static void
++signal_int(int signum)
++{
++	running = 0;
++}
++
++int
++main(int argc, char **argv)
++{
++	struct sigaction sigint;
++	struct display *display;
++	struct window *window;
++	int ret = 0;
++
++	display = create_display();
++	window = create_window(display, panel_width, panel_height);
++	if (!window)
++		return 1;
++
++	sigint.sa_handler = signal_int;
++	sigemptyset(&sigint.sa_mask);
++	sigint.sa_flags = SA_RESETHAND;
++	sigaction(SIGINT, &sigint, NULL);
++
++	while (running && ret != -1)
++		ret = wl_display_dispatch(display->display);
++
++	fprintf(stderr, "notification-shm exiting\n");
++
++	destroy_window(window);
++	destroy_display(display);
++
++	return 0;
++}
+diff --git a/clients/simple-notification-mtk.c b/clients/simple-notification-mtk.c
+new file mode 100644
+index 0000000..9fb17e8
+--- /dev/null
++++ b/clients/simple-notification-mtk.c
+@@ -0,0 +1,267 @@
++/*
++ * Copyright © 2016 MediaTek
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice (including the next
++ * paragraph) shall be included in all copies or substantial portions of the
++ * Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++ * DEALINGS IN THE SOFTWARE.
++ */
++ 
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdbool.h>
++#include <math.h>
++#include <assert.h>
++#include <signal.h> 
++#include <wayland-client.h>
++#include <wayland-egl.h>
++#include <wayland-cursor.h>
++#include "notification-mtk-client-protocol.h"
++#include <sys/types.h>
++#include <unistd.h>
++#include "shared/platform.h"
++
++#define BUTTON_BASE_ID	1000
++
++struct display {
++	struct wl_display *display;
++	struct wl_registry *registry;
++	struct wl_compositor *compositor;
++	struct wl_notification_entry_manager *manager;
++	struct wl_notification_entry *entry;
++};
++
++
++static int running = 1;
++static int debug = 0;
++
++static void
++entry_button_handler(void *data,
++			       struct wl_notification_entry *wl_notification_entry,
++			       uint32_t button_id)
++{
++//	struct display *d = data;
++
++	if (button_id == BUTTON_BASE_ID) {
++		fprintf(stderr, "notification-simple buttone Ok down\n");
++		wl_notification_entry_deactivate(wl_notification_entry);
++	}
++
++	if (button_id == BUTTON_BASE_ID + 1) {
++		fprintf(stderr, "notification-simple buttone Cancel down\n");
++	}
++
++	if (button_id == BUTTON_BASE_ID + 2) {
++		fprintf(stderr, "notification-simple buttone Enter down\n");
++	}
++
++	if (button_id == BUTTON_BASE_ID + 3) {
++		fprintf(stderr, "notification-simple buttone Leave down\n");
++	}
++
++}
++
++static void
++status_notify_handler(void *data,
++			      struct wl_notification_entry *wl_notification_entry,
++			      uint32_t request_id,
++			      uint32_t status)
++{
++//	struct display *d = data;
++	switch (request_id) {
++	case WL_NOTIFICATION_PANEL_ACTION_ACTIVATE:
++		if(status == true){
++			fprintf(stderr, "entry %p activate OK. \n", wl_notification_entry);
++		} else {
++			fprintf(stderr, "entry %p activate Fail. \n", wl_notification_entry);
++		}
++		break;
++	case WL_NOTIFICATION_PANEL_ACTION_SET_ATTRIBUTE:
++		if(status == true){
++			fprintf(stderr, "entry %p set attribute OK. \n", wl_notification_entry);
++		} else {
++			fprintf(stderr, "entry %p set attribute Fail. \n", wl_notification_entry);
++		}
++		break;
++	case WL_NOTIFICATION_PANEL_ACTION_SET_BUTTON:
++		if(status == true){
++			fprintf(stderr, "entry %p set button OK. \n", wl_notification_entry);
++		} else {
++			fprintf(stderr, "entry %p set button Fail. \n", wl_notification_entry);
++		}
++		break;
++	case WL_NOTIFICATION_PANEL_ACTION_COMMIT:
++		if(status == true){
++			fprintf(stderr, "entry %p commit OK. \n", wl_notification_entry);
++		} else {
++			fprintf(stderr, "entry %p commit Fail. \n", wl_notification_entry);
++		}
++		break;
++	case WL_NOTIFICATION_PANEL_ACTION_DEACTIVATE:
++		if(status == true){
++			fprintf(stderr, "entry %p deactivate OK. \n", wl_notification_entry);
++			running = 0;
++		} else {
++			fprintf(stderr, "entry %p deactivate Fail. \n", wl_notification_entry);
++		}
++		break;
++	}
++}
++
++static const struct wl_notification_entry_listener entry_listener = {
++	entry_button_handler,
++	status_notify_handler
++};
++
++
++static void
++registry_handle_global(void *data, struct wl_registry *registry,
++		       uint32_t name, const char *interface, uint32_t version)
++{
++	struct display *d = data;
++
++	if (strcmp(interface, "wl_compositor") == 0) {
++		d->compositor =
++			wl_registry_bind(registry, name,
++					 &wl_compositor_interface, 2);
++	}else if (strcmp(interface, "wl_notification_entry_manager") == 0) {
++		d->manager = wl_registry_bind(registry,
++					     name, &wl_notification_entry_manager_interface, 1);
++	}
++}
++
++static void
++registry_handle_global_remove(void *data, struct wl_registry *registry,
++			      uint32_t name)
++{
++}
++
++static const struct wl_registry_listener registry_listener = {
++	registry_handle_global,
++	registry_handle_global_remove
++};
++
++static void
++signal_int(int signum)
++{
++	running = 0;
++}
++
++static void
++usage(int error_code)
++{
++	fprintf(stderr, "Usage: notification-simple [OPTIONS]\n\n"
++		"  -w\tSet warning notification\n"
++		"  -e\tSet error notification\n"
++		"  -2\tSet two buttons\n"
++		"  -3\tSet three buttons\n"
++		"  -4\tSet four buttons\n"
++		"  -h\tThis help text\n\n");
++
++	exit(error_code);
++}
++
++int
++main(int argc, char **argv)
++{
++	struct sigaction sigint;
++	struct display display = { 0 };
++	int i, ret = 0;
++	int notifcation_type = WL_NOTIFICATION_PANEL_CONTEXT_ENTRY_TYPE_NOTICE;
++	int button_num = 1;
++
++	char * button_name[4] = {
++		"Ok", "Cancel", "Enter", "Leave"
++	};
++
++	for (i = 1; i < argc; i++) {
++		if (strcmp("-d", argv[i]) == 0)
++			debug = 1;
++		else if (strcmp("-2", argv[i]) == 0)
++			button_num = 2;
++		else if (strcmp("-3", argv[i]) == 0)
++			button_num = 3;
++		else if (strcmp("-4", argv[i]) == 0)
++			button_num = 4;
++		else if (strcmp("-w", argv[i]) == 0)
++			notifcation_type = WL_NOTIFICATION_PANEL_CONTEXT_ENTRY_TYPE_WARNING;
++		else if (strcmp("-e", argv[i]) == 0)
++			notifcation_type = WL_NOTIFICATION_PANEL_CONTEXT_ENTRY_TYPE_ERROR;
++		else if (strcmp("-h", argv[i]) == 0)
++			usage(EXIT_SUCCESS);
++		else
++			usage(EXIT_FAILURE);
++	}
++
++	display.display = wl_display_connect(NULL);
++	assert(display.display);
++
++	display.registry = wl_display_get_registry(display.display);
++	wl_registry_add_listener(display.registry,
++				 &registry_listener, &display);
++
++	wl_display_dispatch(display.display);
++
++	if (NULL == display.manager)
++		exit(EXIT_FAILURE);
++
++	display.entry = wl_notification_entry_manager_create_entry(display.manager);
++
++	wl_notification_entry_activate(display.entry);
++	wl_notification_entry_set_attribute(display.entry,
++			notifcation_type,
++			"notification simple",
++			"notification simple text messages!");
++
++	for(i = 0; i < button_num; i ++)
++	{
++		wl_notification_entry_set_button(display.entry,
++			BUTTON_BASE_ID + i, button_name[i]);
++	}
++
++	wl_notification_entry_commit(display.entry);
++
++	wl_notification_entry_add_listener(display.entry,
++				 &entry_listener, &display);
++
++	sigint.sa_handler = signal_int;
++	sigemptyset(&sigint.sa_mask);
++	sigint.sa_flags = SA_RESETHAND;
++	sigaction(SIGINT, &sigint, NULL);
++
++	while (running && ret != -1)
++		ret = wl_display_dispatch(display.display);
++
++	fprintf(stderr, "notification-simple exiting\n");
++
++	if (display.compositor)
++		wl_compositor_destroy(display.compositor);
++	if (display.manager)
++		wl_notification_entry_manager_destroy(display.manager);
++	if (display.entry)
++		wl_notification_entry_destroy(display.entry);
++
++	wl_registry_destroy(display.registry);
++	wl_display_flush(display.display);
++	wl_display_disconnect(display.display);
++
++	return 0;
++}
++
++
++
+diff --git a/ivi-shell/ivi-shell.c b/ivi-shell/ivi-shell.c
+index c502c74..0295615 100644
+--- a/ivi-shell/ivi-shell.c
++++ b/ivi-shell/ivi-shell.c
+@@ -361,6 +361,9 @@ shell_destroy(struct wl_listener *listener, void *data)
+ 	text_backend_destroy(shell->text_backend);
+ 	input_panel_destroy(shell);
+ 
++	notification_backend_destroy(shell->notification_backend);
++	notification_panel_destroy(shell);
++
+ 	wl_list_for_each_safe(ivisurf, next, &shell->ivi_surface_list, link) {
+ 		wl_list_remove(&ivisurf->link);
+ 		free(ivisurf);
+@@ -388,6 +391,8 @@ init_ivi_shell(struct weston_compositor *compositor, struct ivi_shell *shell,
+ 
+ 	weston_layer_init(&shell->input_panel_layer, NULL);
+ 
++	weston_layer_init(&shell->notification_panel_layer, NULL);
++
+ 	if (setting->developermode) {
+ 		weston_install_debug_key_binding(compositor, MODIFIER_SUPER);
+ 
+@@ -512,6 +517,13 @@ module_init(struct weston_compositor *compositor,
+ 	if (!shell->text_backend)
+ 		goto out_settings;
+ 
++	if (notification_panel_setup(shell) < 0)
++		goto out_settings;
++
++	shell->notification_backend = notification_backend_init(compositor);
++	if (!shell->notification_backend)
++		goto out_settings;
++
+ 	if (wl_global_create(compositor->wl_display,
+ 			     &ivi_application_interface, 1,
+ 			     shell, bind_ivi_application) == NULL)
+diff --git a/ivi-shell/ivi-shell.h b/ivi-shell/ivi-shell.h
+index 45faceb..31922b8 100644
+--- a/ivi-shell/ivi-shell.h
++++ b/ivi-shell/ivi-shell.h
+@@ -58,6 +58,15 @@ struct ivi_shell
+ 		struct wl_resource *binding;
+ 		struct wl_list surfaces;
+ 	} input_panel;
++
++	struct notification_backend *notification_backend;
++	struct weston_layer notification_panel_layer;
++	bool showing_notification_panels;
++	struct {
++		struct wl_resource *binding;
++		void *surfaces;
++	} notification_panel;
++
+ };
+ 
+ struct weston_view *
+@@ -69,6 +78,12 @@ input_panel_setup(struct ivi_shell *shell);
+ void
+ input_panel_destroy(struct ivi_shell *shell);
+ 
++int
++notification_panel_setup(struct ivi_shell *shell);
++
++void
++notification_panel_destroy(struct ivi_shell *shell);
++
+ void
+ shell_surface_send_configure(struct weston_surface *surface,
+ 			     int32_t width, int32_t height);
+diff --git a/ivi-shell/notification-panel-ivi-mtk.c b/ivi-shell/notification-panel-ivi-mtk.c
+new file mode 100644
+index 0000000..82d4efc
+--- /dev/null
++++ b/ivi-shell/notification-panel-ivi-mtk.c
+@@ -0,0 +1,351 @@
++/*
++ * Copyright © 2016 MediaTek
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining
++ * a copy of this software and associated documentation files (the
++ * "Software"), to deal in the Software without restriction, including
++ * without limitation the rights to use, copy, modify, merge, publish,
++ * distribute, sublicense, and/or sell copies of the Software, and to
++ * permit persons to whom the Software is furnished to do so, subject to
++ * the following conditions:
++ *
++ * The above copyright notice and this permission notice (including the
++ * next paragraph) shall be included in all copies or substantial
++ * portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ */
++
++#include "config.h"
++
++#include <stdlib.h>
++#include <stdio.h>
++#include <string.h>
++
++#include "ivi-shell.h"
++#include "notification-mtk-server-protocol.h"
++#include "ivi-layout-private.h"
++#include "shared/helpers.h"
++
++struct notification_panel_surface {
++	struct wl_resource *resource;
++	struct wl_signal destroy_signal;
++
++	struct ivi_shell *shell;
++
++	struct wl_list link;
++	struct weston_surface *surface;
++	struct weston_view *view;
++	struct wl_listener surface_destroy_listener;
++
++	struct weston_view_animation *anim;
++
++	struct weston_output *output;
++	uint32_t panel;
++};
++
++static void
++notification_panel_slide_done(struct weston_view_animation *animation, void *data)
++{
++	struct notification_panel_surface *ipsurf = data;
++
++	ipsurf->anim = NULL;
++}
++
++static void
++show_notification_panel_surface(struct notification_panel_surface *ipsurf)
++{
++	struct ivi_shell *shell = ipsurf->shell;
++	float x, y;
++
++	x = ipsurf->output->x + (ipsurf->output->width - ipsurf->surface->width) / 2;
++	y = ipsurf->output->y + (ipsurf->output->height - ipsurf->surface->height) / 2;
++	weston_view_set_position(ipsurf->view, x, y);
++
++	weston_layer_entry_insert(&shell->notification_panel_layer.view_list,
++	                          &ipsurf->view->layer_link);
++	weston_view_geometry_dirty(ipsurf->view);
++	weston_view_update_transform(ipsurf->view);
++	weston_surface_damage(ipsurf->surface);
++
++	if (ipsurf->anim)
++		weston_view_animation_destroy(ipsurf->anim);
++
++	ipsurf->anim =
++		weston_slide_run(ipsurf->view,
++				 ipsurf->surface->height * 0.9, 0,
++				 notification_panel_slide_done, ipsurf);
++}
++
++static void
++show_notification_panels(struct ivi_shell *shell)
++{
++	struct notification_panel_surface *ipsurf;
++
++	if (shell->showing_notification_panels)
++		return;
++
++	ipsurf = shell->notification_panel.surfaces;
++
++	shell->showing_notification_panels = true;
++
++	if (!shell->locked)
++		wl_list_insert(&shell->compositor->cursor_layer.link,
++			       &shell->notification_panel_layer.link);
++
++	if(NULL != ipsurf) {
++		show_notification_panel_surface(ipsurf);
++	}
++}
++
++static void
++hide_notification_panels(struct ivi_shell *shell)
++{
++	struct weston_view *view, *next;
++
++	if (!shell->showing_notification_panels)
++		return;
++
++	shell->showing_notification_panels = false;
++
++	if (!shell->locked)
++		wl_list_remove(&shell->notification_panel_layer.link);
++
++	wl_list_for_each_safe(view, next,
++			      &shell->notification_panel_layer.view_list.link,
++			      layer_link.link)
++		weston_view_unmap(view);
++}
++
++static void
++refresh_notification_panels(struct ivi_shell *shell,
++		       uint32_t entry_num)
++{
++	hide_notification_panels(shell);
++
++	if (entry_num != 0){
++		show_notification_panels(shell);
++	}
++}
++
++static void
++notification_panel_configure(struct weston_surface *surface, int32_t sx, int32_t sy)
++{
++	struct notification_panel_surface *ip_surface = surface->configure_private;
++	struct ivi_shell *shell = ip_surface->shell;
++	float x, y;
++
++	x = ip_surface->output->x + (ip_surface->output->width - surface->width) / 2;
++	y = ip_surface->output->y + (ip_surface->output->height - surface->height) / 2;
++
++	weston_view_set_position(ip_surface->view, x, y);
++
++	if (!weston_surface_is_mapped(surface) && shell->showing_notification_panels)
++		show_notification_panel_surface(ip_surface);
++}
++
++static void
++destroy_notification_panel_surface(struct notification_panel_surface *notification_panel_surface)
++{
++	wl_signal_emit(&notification_panel_surface->destroy_signal, notification_panel_surface);
++
++	wl_list_remove(&notification_panel_surface->surface_destroy_listener.link);
++	wl_list_remove(&notification_panel_surface->link);
++
++	notification_panel_surface->surface->configure = NULL;
++	weston_view_destroy(notification_panel_surface->view);
++
++	free(notification_panel_surface);
++}
++
++static struct notification_panel_surface *
++get_notification_panel_surface(struct weston_surface *surface)
++{
++	if (surface->configure == notification_panel_configure) {
++		return surface->configure_private;
++	} else {
++		return NULL;
++	}
++}
++
++static void
++notification_panel_handle_surface_destroy(struct wl_listener *listener, void *data)
++{
++	struct notification_panel_surface *ipsurface = container_of(listener,
++							     struct notification_panel_surface,
++							     surface_destroy_listener);
++
++	if (ipsurface->resource) {
++		wl_resource_destroy(ipsurface->resource);
++	} else {
++		ipsurface->shell->showing_notification_panels = false;
++		destroy_notification_panel_surface(ipsurface);
++	}
++}
++
++static struct notification_panel_surface *
++create_notification_panel_surface(struct ivi_shell *shell,
++			   struct weston_surface *surface)
++{
++	struct notification_panel_surface *notification_panel_surface;
++
++	notification_panel_surface = calloc(1, sizeof *notification_panel_surface);
++	if (!notification_panel_surface)
++		return NULL;
++
++	surface->configure = notification_panel_configure;
++	surface->configure_private = notification_panel_surface;
++
++	notification_panel_surface->shell = shell;
++
++	notification_panel_surface->surface = surface;
++	notification_panel_surface->view = weston_view_create(surface);
++
++	wl_signal_init(&notification_panel_surface->destroy_signal);
++	notification_panel_surface->surface_destroy_listener.notify =
++			notification_panel_handle_surface_destroy;
++	wl_signal_add(&surface->destroy_signal,
++		      &notification_panel_surface->surface_destroy_listener);
++
++	wl_list_init(&notification_panel_surface->link);
++
++	return notification_panel_surface;
++}
++
++static void
++notification_panel_surface_set_toplevel(struct wl_client *client,
++				 struct wl_resource *resource,
++				 struct wl_resource *output_resource,
++				 uint32_t position)
++{
++	struct notification_panel_surface *notification_panel_surface =
++		wl_resource_get_user_data(resource);
++	struct ivi_shell *shell = notification_panel_surface->shell;
++
++	shell->notification_panel.surfaces = notification_panel_surface;
++
++	notification_panel_surface->output = wl_resource_get_user_data(output_resource);
++	notification_panel_surface->panel = position;
++}
++
++static const struct wl_notification_panel_surface_interface notification_panel_surface_implementation = {
++	notification_panel_surface_set_toplevel
++};
++
++static void
++destroy_notification_panel_surface_resource(struct wl_resource *resource)
++{
++	struct notification_panel_surface *ipsurf =
++		wl_resource_get_user_data(resource);
++
++	ipsurf->shell->showing_notification_panels = false;
++	destroy_notification_panel_surface(ipsurf);
++}
++
++static void
++notification_panel_get_panel_surface(struct wl_client *client,
++				    struct wl_resource *resource,
++				    uint32_t id,
++				    struct wl_resource *surface_resource)
++{
++	struct weston_surface *surface =
++		wl_resource_get_user_data(surface_resource);
++	struct ivi_shell *shell = wl_resource_get_user_data(resource);
++	struct notification_panel_surface *ipsurf;
++
++	if (get_notification_panel_surface(surface)) {
++		wl_resource_post_error(surface_resource,
++				       WL_DISPLAY_ERROR_INVALID_OBJECT,
++				       "wl_notification_panel::get_notification_panel_surface already requested");
++		return;
++	}
++
++	ipsurf = create_notification_panel_surface(shell, surface);
++	if (!ipsurf) {
++		wl_resource_post_error(surface_resource,
++				       WL_DISPLAY_ERROR_INVALID_OBJECT,
++				       "surface->configure already set");
++		return;
++	}
++
++	ipsurf->resource =
++		wl_resource_create(client,
++				   &wl_notification_panel_surface_interface, 1, id);
++	wl_resource_set_implementation(ipsurf->resource,
++				       &notification_panel_surface_implementation,
++				       ipsurf,
++				       destroy_notification_panel_surface_resource);
++}
++
++static void
++notification_panel_commit(struct wl_client *client,
++		       struct wl_resource *resource,
++		       uint32_t entry_num)
++{
++	struct ivi_shell *shell = wl_resource_get_user_data(resource);
++
++	refresh_notification_panels(shell, entry_num);
++}
++
++static const struct wl_notification_panel_interface notification_panel_implementation = {
++	notification_panel_get_panel_surface,
++	notification_panel_commit
++};
++
++static void
++unbind_notification_panel(struct wl_resource *resource)
++{
++	struct ivi_shell *shell = wl_resource_get_user_data(resource);
++
++	shell->notification_panel.binding = NULL;
++}
++
++static void
++bind_notification_panel(struct wl_client *client,
++             void *data, uint32_t version, uint32_t id)
++{
++	struct ivi_shell *shell = data;
++	struct wl_resource *resource;
++
++	resource = wl_resource_create(client,
++				      &wl_notification_panel_interface, 1, id);
++
++	if (shell->notification_panel.binding == NULL) {
++		wl_resource_set_implementation(resource,
++					       &notification_panel_implementation,
++					       shell, unbind_notification_panel);
++		shell->notification_panel.binding = resource;
++ 		wl_signal_emit(&shell->compositor->bind_notification_panel_signal, resource);
++		return;
++	}
++
++	wl_resource_post_error(resource, WL_DISPLAY_ERROR_INVALID_OBJECT,
++			       "interface object already bound");
++}
++
++void
++notification_panel_destroy(struct ivi_shell *shell)
++{
++
++}
++
++int
++notification_panel_setup(struct ivi_shell *shell)
++{
++	shell->notification_panel.surfaces = NULL;
++	shell->showing_notification_panels = false;
++
++	if (wl_global_create(shell->compositor->wl_display,
++			     &wl_notification_panel_interface, 1,
++			     shell, bind_notification_panel) == NULL)
++		return -1;
++
++	return 0;
++}
+diff --git a/protocol/notification-mtk.xml b/protocol/notification-mtk.xml
+new file mode 100644
+index 0000000..cd3a887
+--- /dev/null
++++ b/protocol/notification-mtk.xml
+@@ -0,0 +1,191 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<protocol name="notification_panel">
++
++  <copyright>
++    Copyright (c) 2016 MediaTek
++
++    Permission is hereby granted, free of charge, to any person obtaining a
++    copy of this software and associated documentation files (the "Software"),
++    to deal in the Software without restriction, including without limitation
++    the rights to use, copy, modify, merge, publish, distribute, sublicense,
++    and/or sell copies of the Software, and to permit persons to whom the
++    Software is furnished to do so, subject to the following conditions:
++
++    The above copyright notice and this permission notice (including the next
++    paragraph) shall be included in all copies or substantial portions of the
++    Software.
++
++    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++    DEALINGS IN THE SOFTWARE.
++  </copyright>
++
++  <interface name="wl_notification_panel" version="1">
++    <enum name="action">
++      <entry name="activate" value="0"/>
++      <entry name="deactivate" value="1"/>
++      <entry name="set_attribute" value="2"/>
++      <entry name="set_button" value="3"/>
++      <entry name="commit" value="4"/>
++    </enum>
++    <description summary="interface for implementing notification center">
++      Only one client can bind this interface at a time.
++    </description>
++
++    <request name="get_panel_surface">
++      <arg name="id" type="new_id" interface="wl_notification_panel_surface"/>
++      <arg name="surface" type="object" interface="wl_surface"/>
++    </request>
++
++    <request name="commit">
++      <description summary="commit information and display">
++        Commit information and display.
++      </description>
++      <arg name="entry_num" type="uint"/>
++    </request>
++
++    <event name="activate">
++      <description summary="activate a notification entry">
++        Activate a notification entry.
++      </description>
++      <arg name="id" type="new_id" interface="wl_notification_panel_context"/>
++    </event>
++
++    <event name="deactivate">
++      <description summary="deactivate a notification entry">
++        Deactivate a notification entry.
++      </description>
++      <arg name="context" type="object" interface="wl_notification_panel_context"/>
++    </event>
++  </interface>
++
++  <interface name="wl_notification_panel_surface" version="1">
++
++    <request name="set_toplevel">
++      <description summary="set the panel surface type">
++        Set notification panel show type.
++      </description>
++      <arg name="output" type="object" interface="wl_output"/>
++      <arg name="position" type="uint"/>
++    </request>
++  </interface>
++
++  <interface name="wl_notification_panel_context" version="1">
++    <enum name="entry_type">
++      <entry name="error" value="0"/>
++      <entry name="warning" value="1"/>
++      <entry name="notice" value="2"/>
++    </enum>
++
++    <event name="set_attribute">
++      <description summary="set notification entry type, title, text information">
++        Set notification attribute.
++      </description>
++      <arg name="type" type="uint"/>
++      <arg name="title" type="string"/>
++      <arg name="text" type="string"/>
++    </event>
++
++    <event name="set_button">
++      <description summary="set notification entry button name">
++        Set notification button name. A button( button_id = 0 ) named "Ok" must be set by default.
++      </description>
++      <arg name="button_id" type="uint"/>
++      <arg name="button_name" type="string"/>
++    </event>
++
++    <event name="commit">
++      <description summary="commit information and display">
++        Commit information and display.
++      </description>
++    </event>
++
++    <request name="button_handler">
++      <description summary="Handle a button down">
++        Handle a button down.
++      </description>
++      <arg name="button_id" type="uint"/>
++    </request>
++
++    <request name="status_notify">
++      <description summary="notify request status">
++        Notify request status.
++      </description>
++      <arg name="request_id" type="uint"/>
++      <arg name="status" type="uint"/>
++    </request>
++  </interface>
++
++  <interface name="wl_notification_entry_manager" version="1">
++    <description summary="notification entry manager">
++      A factory for notification entry objects. This object is a global singleton.
++    </description>
++
++    <request name="create_entry">
++      <description summary="create notification entry">
++        Creates a new notification entry object.
++      </description>
++      <arg name="id" type="new_id" interface="wl_notification_entry"/>
++    </request>
++  </interface>
++
++  <interface name="wl_notification_entry" version="1">
++    <description summary="A notification entry object">
++      A notification entry object.
++    </description>
++
++    <request name="activate">
++      <description summary="activate the notification entry">
++        Activate the notification entry.
++      </description>
++    </request>
++
++    <request name="deactivate">
++      <description summary="deactivate the notification entry">
++        Deactivate the notification entry.
++      </description>
++    </request>
++
++    <request name="set_attribute">
++      <description summary="set notification entry type, title, text information">
++        Set notification attribute.
++      </description>
++      <arg name="type" type="uint"/>
++      <arg name="title" type="string"/>
++      <arg name="text" type="string"/>
++    </request>
++
++    <request name="set_button">
++      <description summary="set notification entry button name">
++        Set notification button name. A button( button_id = 0 ) named "Ok" must be set by default.
++      </description>
++      <arg name="button_id" type="uint"/>
++      <arg name="button_name" type="string"/>
++    </request>
++
++    <request name="commit">
++      <description summary="commit information and display">
++        Commit information and display.
++      </description>
++    </request>
++
++    <event name="button_handler">
++      <description summary="Handle a button down">
++        Handle a button down.
++      </description>
++      <arg name="button_id" type="uint"/>
++    </event>
++
++    <event name="status_notify">
++      <description summary="notify request status">
++        Notify request status.
++      </description>
++      <arg name="request_id" type="uint"/>
++      <arg name="status" type="uint"/>
++    </event>
++  </interface>
++</protocol>
+diff --git a/src/compositor.c b/src/compositor.c
+index b6ef7f3..eb16379 100644
+--- a/src/compositor.c
++++ b/src/compositor.c
+@@ -4700,6 +4700,7 @@ weston_compositor_create(struct wl_display *display, void *user_data)
+ 	wl_signal_init(&ec->show_input_panel_signal);
+ 	wl_signal_init(&ec->hide_input_panel_signal);
+ 	wl_signal_init(&ec->update_input_panel_signal);
++	wl_signal_init(&ec->bind_notification_panel_signal);
+ 	wl_signal_init(&ec->seat_created_signal);
+ 	wl_signal_init(&ec->output_created_signal);
+ 	wl_signal_init(&ec->output_destroyed_signal);
+diff --git a/src/compositor.h b/src/compositor.h
+index 476b650..2507b79 100644
+--- a/src/compositor.h
++++ b/src/compositor.h
+@@ -739,6 +739,7 @@ struct weston_compositor {
+ 	struct wl_signal show_input_panel_signal;
+ 	struct wl_signal hide_input_panel_signal;
+ 	struct wl_signal update_input_panel_signal;
++	struct wl_signal bind_notification_panel_signal;
+ 
+ 	struct wl_signal seat_created_signal;
+ 	struct wl_signal output_created_signal;
+@@ -1607,6 +1608,14 @@ text_backend_init(struct weston_compositor *ec);
+ void
+ text_backend_destroy(struct text_backend *text_backend);
+ 
++struct notification_backend;
++
++struct notification_backend *
++notification_backend_init(struct weston_compositor *ec);
++
++void
++notification_backend_destroy(struct notification_backend *notification_backend);
++
+ struct weston_process;
+ typedef void (*weston_process_cleanup_func_t)(struct weston_process *process,
+ 					    int status);
+diff --git a/src/notification-backend-mtk.c b/src/notification-backend-mtk.c
+new file mode 100644
+index 0000000..a9adb7d
+--- /dev/null
++++ b/src/notification-backend-mtk.c
+@@ -0,0 +1,416 @@
++/*
++ * Copyright © 2012 Openismus GmbH
++ * Copyright © 2012 Intel Corporation
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining
++ * a copy of this software and associated documentation files (the
++ * "Software"), to deal in the Software without restriction, including
++ * without limitation the rights to use, copy, modify, merge, publish,
++ * distribute, sublicense, and/or sell copies of the Software, and to
++ * permit persons to whom the Software is furnished to do so, subject to
++ * the following conditions:
++ *
++ * The above copyright notice and this permission notice (including the
++ * next paragraph) shall be included in all copies or substantial
++ * portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ */
++
++#include "config.h"
++
++#include <stdbool.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++#include <time.h>
++
++#include "compositor.h"
++#include "notification-mtk-server-protocol.h"
++#include "shared/helpers.h"
++
++struct notification_entry_manager;
++struct notification_entry;
++struct notification_backend;
++
++struct notification_entry {
++	struct wl_resource *resource;
++	struct wl_list link;
++
++	struct weston_compositor *ec;
++
++	struct notification_panel_context *context;
++
++	struct notification_entry_manager *manager;
++};
++
++struct notification_entry_manager {
++	struct wl_global *notification_entry_manager_global;
++	struct wl_listener destroy_listener;
++	struct wl_listener bind_panel_listener;
++	struct wl_resource *panel_binding;
++
++	struct notification_entry *current_entry;
++
++	struct wl_list notification_entrys;
++
++	struct weston_compositor *ec;
++};
++
++struct notification_panel_context {
++	struct wl_resource *resource;
++
++	struct notification_entry *entry;
++};
++
++struct notification_backend {
++	struct weston_compositor *compositor;
++
++	struct {
++		char *path;
++		struct weston_process process;
++		struct wl_client *client;
++
++		unsigned deathcount;
++		uint32_t deathstamp;
++	} notification_panel;
++};
++
++static void
++destroy_notification_entry(struct wl_resource *resource)
++{
++	struct notification_entry *notification_entry = wl_resource_get_user_data(resource);
++
++	wl_list_remove(&notification_entry->link);
++
++	free(notification_entry);
++}
++
++static void
++destroy_notification_panel_context(struct wl_resource *resource)
++{
++	struct notification_panel_context *context =
++		wl_resource_get_user_data(resource);
++
++	free(context);
++}
++
++static void
++notification_panel_context_button_hanlder(struct wl_client *client,
++				   struct wl_resource *resource,
++				   uint32_t button_id)
++{
++	struct notification_panel_context *context =
++		wl_resource_get_user_data(resource);
++
++	if (context->entry)
++		wl_notification_entry_send_button_handler(context->entry->resource, button_id);
++}
++
++static void
++notification_panel_context_status_notify(struct wl_client *client,
++					  struct wl_resource *resource,
++					  uint32_t request_id,
++					  uint32_t status)
++{
++	struct notification_panel_context *context =
++		wl_resource_get_user_data(resource);
++
++	if (context->entry)
++		wl_notification_entry_send_status_notify(context->entry->resource,
++							request_id, status);
++}
++
++static const struct wl_notification_panel_context_interface context_implementation = {
++	notification_panel_context_button_hanlder,
++	notification_panel_context_status_notify
++};
++
++static void
++notification_entry_activate(struct wl_client *client,
++		    struct wl_resource *resource)
++{
++	struct notification_entry *notification_entry = wl_resource_get_user_data(resource);
++	struct notification_entry_manager *manager = notification_entry->manager;
++	struct notification_panel_context *context;
++
++	context = zalloc(sizeof *context);
++	if (context == NULL)
++		return;
++
++	context->entry = notification_entry;
++
++	context->resource =
++		wl_resource_create(wl_resource_get_client(manager->panel_binding),
++				   &wl_notification_panel_context_interface, 1, 0);
++	wl_resource_set_implementation(context->resource,
++				       &context_implementation,
++				       context, destroy_notification_panel_context);
++
++	notification_entry->context = context;
++
++	wl_notification_panel_send_activate(manager->panel_binding,
++						context->resource);
++}
++
++static void
++notification_entry_deactivate(struct wl_client *client,
++		      struct wl_resource *resource)
++{
++	struct notification_entry *notification_entry = wl_resource_get_user_data(resource);
++	struct notification_entry_manager *manager = notification_entry->manager;
++
++	wl_notification_panel_send_deactivate(manager->panel_binding,
++			notification_entry->context->resource);
++}
++
++static void
++notification_entry_set_attribute(struct wl_client *client,
++			  struct wl_resource *resource,
++			  uint32_t type,
++			  const char *title,
++			  const char *text)
++{
++	struct notification_entry *notification_entry = wl_resource_get_user_data(resource);
++
++	wl_notification_panel_context_send_set_attribute(
++			notification_entry->context->resource, type, title, text);
++
++}
++
++static void
++notification_entry_set_button(struct wl_client *client,
++		   struct wl_resource *resource,
++		   uint32_t button_id,
++		   const char *button_name)
++{
++	struct notification_entry *notification_entry = wl_resource_get_user_data(resource);
++
++	wl_notification_panel_context_send_set_button(
++			notification_entry->context->resource, button_id, button_name);
++}
++
++static void
++notification_entry_commit(struct wl_client *client,
++		   struct wl_resource *resource)
++{
++	struct notification_entry *notification_entry = wl_resource_get_user_data(resource);
++
++	wl_notification_panel_context_send_commit(
++			notification_entry->context->resource);
++}
++
++static const struct wl_notification_entry_interface notification_entry_implementation = {
++	notification_entry_activate,
++	notification_entry_deactivate,
++	notification_entry_set_attribute,
++	notification_entry_set_button,
++	notification_entry_commit
++};
++
++static void notification_entry_manager_create_notification_entry(struct wl_client *client,
++						 struct wl_resource *resource,
++						 uint32_t id)
++{
++	struct notification_entry_manager *notification_entry_manager =
++		wl_resource_get_user_data(resource);
++	struct notification_entry *notification_entry;
++
++	notification_entry = zalloc(sizeof *notification_entry);
++	if (notification_entry == NULL)
++		return;
++
++	notification_entry->resource =
++		wl_resource_create(client, &wl_notification_entry_interface, 1, id);
++	wl_resource_set_implementation(notification_entry->resource,
++				       &notification_entry_implementation,
++				       notification_entry, destroy_notification_entry);
++
++	notification_entry->ec = notification_entry_manager->ec;
++	notification_entry->manager = notification_entry_manager;
++
++	wl_list_insert(&notification_entry_manager->notification_entrys,
++				&notification_entry->link);
++};
++
++static const struct wl_notification_entry_manager_interface manager_implementation = {
++	notification_entry_manager_create_notification_entry
++};
++
++static void
++bind_notification_entry_manager(struct wl_client *client,
++			void *data,
++			uint32_t version,
++			uint32_t id)
++{
++	struct notification_entry_manager *notification_entry_manager = data;
++	struct wl_resource *resource;
++
++	/* No checking for duplicate binding necessary.  */
++	resource =
++		wl_resource_create(client,
++				   &wl_notification_entry_manager_interface, 1, id);
++	if (resource)
++		wl_resource_set_implementation(resource,
++					       &manager_implementation,
++					       notification_entry_manager, NULL);
++}
++
++static void
++binding_notification_panel(struct wl_listener *listener, void *data)
++{
++	struct notification_entry_manager *notification_entry_manager =
++		container_of(listener,
++			     struct notification_entry_manager,
++			     bind_panel_listener);
++
++	notification_entry_manager->panel_binding = data;
++}
++
++static void
++notification_entry_manager_notifier_destroy(struct wl_listener *listener, void *data)
++{
++	struct notification_entry_manager *notification_entry_manager =
++		container_of(listener,
++			     struct notification_entry_manager,
++			     destroy_listener);
++
++	wl_global_destroy(notification_entry_manager->notification_entry_manager_global);
++
++	free(notification_entry_manager);
++}
++
++static void
++notification_entry_manager_create(struct weston_compositor *ec)
++{
++	struct notification_entry_manager *notification_entry_manager;
++
++	notification_entry_manager = zalloc(sizeof *notification_entry_manager);
++	if (notification_entry_manager == NULL)
++		return;
++
++	notification_entry_manager->ec = ec;
++	notification_entry_manager->current_entry = NULL;
++	wl_list_init(&notification_entry_manager->notification_entrys);
++
++	notification_entry_manager->notification_entry_manager_global =
++		wl_global_create(ec->wl_display,
++				 &wl_notification_entry_manager_interface, 1,
++				 notification_entry_manager, bind_notification_entry_manager);
++
++	notification_entry_manager->destroy_listener.notify =
++		notification_entry_manager_notifier_destroy;
++	wl_signal_add(&ec->destroy_signal,
++		      &notification_entry_manager->destroy_listener);
++
++	notification_entry_manager->bind_panel_listener.notify =
++		binding_notification_panel;
++	wl_signal_add(&ec->bind_notification_panel_signal,
++		      &notification_entry_manager->bind_panel_listener);
++}
++
++static void launch_notification_panel(struct notification_backend *notification_backend);
++
++static void
++handle_notification_panel_sigchld(struct weston_process *process, int status)
++{
++	uint32_t time;
++	struct notification_backend *notification_backend =
++		container_of(process, struct notification_backend, notification_panel.process);
++
++	notification_backend->notification_panel.process.pid = 0;
++	notification_backend->notification_panel.client = NULL;
++
++	/* if notification_panel dies more than 5 times in 10 seconds, give up */
++	time = weston_compositor_get_time();
++	if (time - notification_backend->notification_panel.deathstamp > 10000) {
++		notification_backend->notification_panel.deathstamp = time;
++		notification_backend->notification_panel.deathcount = 0;
++	}
++
++	notification_backend->notification_panel.deathcount++;
++	if (notification_backend->notification_panel.deathcount > 5) {
++		weston_log("notification_panel died, giving up.\n");
++		return;
++	}
++
++	weston_log("notification_panel died, respawning...\n");
++	launch_notification_panel(notification_backend);
++}
++
++static void
++launch_notification_panel(struct notification_backend *notification_backend)
++{
++	if (!notification_backend->notification_panel.path)
++		return;
++
++	if (strcmp(notification_backend->notification_panel.path, "") == 0)
++		return;
++
++	if (notification_backend->notification_panel.process.pid != 0)
++		return;
++
++	notification_backend->notification_panel.client =
++		weston_client_launch(notification_backend->compositor,
++				     &notification_backend->notification_panel.process,
++				     notification_backend->notification_panel.path,
++				     handle_notification_panel_sigchld);
++
++	if (!notification_backend->notification_panel.client)
++		weston_log("not able to start %s\n",
++			   notification_backend->notification_panel.path);
++}
++
++static void
++notification_backend_configuration(struct notification_backend *notification_backend)
++{
++	struct weston_config_section *section;
++	char *client;
++	int ret;
++
++	section = weston_config_get_section(notification_backend->compositor->config,
++					    "notification-panel", NULL, NULL);
++	ret = asprintf(&client, "%s/weston-notification-mtk",
++		       weston_config_get_libexec_dir());
++	if (ret < 0)
++		client = NULL;
++	weston_config_section_get_string(section, "path",
++					 &notification_backend->notification_panel.path,
++					 client);
++	free(client);
++
++	launch_notification_panel(notification_backend);
++}
++
++WL_EXPORT void
++notification_backend_destroy(struct notification_backend *notification_backend)
++{
++	if (notification_backend->notification_panel.client)
++		wl_client_destroy(notification_backend->notification_panel.client);
++
++	free(notification_backend->notification_panel.path);
++	free(notification_backend);
++}
++
++WL_EXPORT struct notification_backend *
++notification_backend_init(struct weston_compositor *ec)
++{
++	struct notification_backend *notification_backend;
++
++	notification_backend = zalloc(sizeof(*notification_backend));
++	if (notification_backend == NULL)
++		return NULL;
++
++	notification_backend->compositor = ec;
++	notification_backend_configuration(notification_backend);
++	notification_entry_manager_create(ec);
++
++	return notification_backend;
++}
+-- 
+1.9.1
+

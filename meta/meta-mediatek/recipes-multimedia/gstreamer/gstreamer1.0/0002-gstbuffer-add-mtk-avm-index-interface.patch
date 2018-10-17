@@ -1,0 +1,72 @@
+From 6419443a0badfaf1713ae8ad964b9ac9a000be4c Mon Sep 17 00:00:00 2001
+From: Ricky Zhang <ricky.zhang@mediatek.com>
+Date: Tue, 25 Jul 2017 11:01:40 +0800
+Subject: [PATCH] gstbuffer: add mtk avm index interface
+
+add mtk avm index interface
+Test: test ok
+
+Signed-off-by: Ricky Zhang <ricky.zhang@mediatek.com>
+CR-Id: AUTO00000556
+---
+ gst/gstbuffer.h | 37 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 37 insertions(+)
+
+diff --git a/gst/gstbuffer.h b/gst/gstbuffer.h
+index 20154aa..3c003a3 100644
+--- a/gst/gstbuffer.h
++++ b/gst/gstbuffer.h
+@@ -165,6 +165,13 @@ typedef struct _GstBufferPool GstBufferPool;
+  * Tests if the buffer marks a discontinuity in the stream.
+  */
+ #define GST_BUFFER_IS_DISCONT(buffer)   (GST_BUFFER_FLAG_IS_SET (buffer, GST_BUFFER_FLAG_DISCONT))
++/**
++ * GST_MTK_AVM_INDEX:
++ *
++ * Add index to GstBuffer for mtk avm
++ */
++#define GST_MTK_AVM_INDEX \
++	gst_mtk_avm_index_quark()
+ 
+ /**
+  * GstBufferFlags:
+@@ -321,6 +328,36 @@ void        gst_buffer_unmap               (GstBuffer *buffer, GstMapInfo *info)
+ void        gst_buffer_extract_dup         (GstBuffer *buffer, gsize offset,
+                                             gsize size, gpointer *dest,
+                                             gsize *dest_size);
++/**
++ * gst_mtk_avm_index_quark:
++ *
++ * create a quark using GstMtkAVMIndex string
++ *
++ * Returns: quark
++ */
++static inline GQuark
++gst_mtk_avm_index_quark (void)
++{
++  static GQuark quark = 0;
++
++  if (quark == 0)
++    quark = g_quark_from_string ("GstMtkAVMIndex");
++
++  return quark;
++}
++
++/**
++ * gst_destroy_mtk_avm_index:
++ *
++ * free index
++ *
++ */
++static inline void
++gst_destroy_mtk_avm_index (gint *index)
++{
++  g_slice_free (gint, index);
++  index = NULL;
++}
+ 
+ /* refcounting */
+ /**
+-- 
+1.9.1
+

@@ -1,0 +1,34 @@
+From 5b7618eba6b3568ec219bb30245a977cfa765484 Mon Sep 17 00:00:00 2001
+From: Changtao Hu <changtao.hu@mediatek.com>
+Date: Thu, 18 Jan 2018 17:33:03 +0800
+Subject: [PATCH] gst: remove lib mtkconv
+
+remove lib mtkconv
+Test: OK
+
+Signed-off-by: Changtao Hu <changtao.hu@mediatek.com>
+CR-Id: AUTO00013575
+---
+ sys/v4l2/Makefile.am | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+ mode change 100755 => 100644 sys/v4l2/Makefile.am
+
+diff --git a/sys/v4l2/Makefile.am b/sys/v4l2/Makefile.am
+old mode 100755
+new mode 100644
+index eb48423..e507385
+--- a/sys/v4l2/Makefile.am
++++ b/sys/v4l2/Makefile.am
+@@ -41,8 +41,7 @@ libgstvideo4linux2_la_LIBADD =   $(GST_PLUGINS_BASE_LIBS) \
+ 				 $(GST_LIBS) \
+ 				 $(LIBV4L2_LIBS) \
+ 				 $(GUDEV_LIBS) \
+-				 $(LIBRT) \
+-				 -lmtkconv
++				 $(LIBRT)
+ 
+ noinst_HEADERS = \
+ 	ext/types-compat.h \
+-- 
+1.9.1
+

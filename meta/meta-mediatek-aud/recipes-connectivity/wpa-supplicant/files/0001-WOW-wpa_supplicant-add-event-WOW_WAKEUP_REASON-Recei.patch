@@ -1,0 +1,46 @@
+From a1cf56e6c95b5bf06b497e8a868bd78103b48315 Mon Sep 17 00:00:00 2001
+From: Yaohan Liao <yaohan.liao@mediatek.com>
+Date: Wed, 6 Sep 2017 17:32:46 +0800
+Subject: [PATCH] <WOW>: wpa_supplicant add event "WOW_WAKEUP_REASON Received"
+
+wpa_supplicant adds event "WOW_MAGIC_PACKET_RECEIVED" to notify upper layer of WOW infomation
+Test: build pass
+
+Signed-off-by: Yaohan Liao <yaohan.liao@mediatek.com>
+CR-Id: AUTO00006786
+---
+ src/common/qca-vendor.h            | 3 ++-
+ src/drivers/driver_nl80211_event.c | 3 +++
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/common/qca-vendor.h b/src/common/qca-vendor.h
+index d507716..bb55e02 100755
+--- a/src/common/qca-vendor.h
++++ b/src/common/qca-vendor.h
+@@ -168,7 +168,8 @@ enum google_nl80211_vendor_subcmds{
+ 	GOOGLE_NL80211_VENDOR_SUBCMD_GSCAN_EVENT_COMPLETE_SCAN,
+ 	GOOGLE_NL80211_VENDOR_SUBCMD_GSCAN_EVENT_HOTLIST_RESULTS_LOST,
+ 	GOOGLE_NL80211_VENDOR_SUBCMD_WIFI_EVENT_RSSI_MONITOR,
+-	GOOGLE_NL80211_VENDOR_SUBCMD_MAGIC_PACKET_RECEIVED = 8
++	GOOGLE_NL80211_VENDOR_SUBCMD_MAGIC_PACKET_RECEIVED,
++	GOOGLE_NL80211_VENDOR_SUBCMD_WIFI_EVENT_WOW_WAKEUP_REASON
+ 
+ };
+ 
+diff --git a/src/drivers/driver_nl80211_event.c b/src/drivers/driver_nl80211_event.c
+index 1e3d9df..c4518a2 100755
+--- a/src/drivers/driver_nl80211_event.c
++++ b/src/drivers/driver_nl80211_event.c
+@@ -1725,6 +1725,9 @@ static void nl80211_vendor_event_google(struct wpa_driver_nl80211_data *drv,
+ 	case GOOGLE_NL80211_VENDOR_SUBCMD_MAGIC_PACKET_RECEIVED:
+ 		wpa_msg(drv->ctx, MSG_INFO, "WOW_MAGIC_PACKET_RECEIVED ");
+ 		break;
++	case GOOGLE_NL80211_VENDOR_SUBCMD_WIFI_EVENT_WOW_WAKEUP_REASON:
++		wpa_msg(drv->ctx, MSG_INFO, "WOW_WAKEUP_REASON Received(reason=0x%08x)", *(u32 *)data);
++		break;
+ 	default:
+ 		wpa_printf(MSG_DEBUG,
+ 			   "nl80211: Ignore unsupported Google vendor event %u",
+-- 
+1.9.1
+

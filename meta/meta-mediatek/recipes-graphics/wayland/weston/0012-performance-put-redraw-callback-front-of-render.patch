@@ -1,0 +1,232 @@
+From 8c863b28f8fc9d35780632ae202b72f71015090a Mon Sep 17 00:00:00 2001
+From: Nelson Liu <nelson.liu@mediatek.com>
+Date: Wed, 28 Sep 2016 10:52:08 +0800
+Subject: [PATCH 12/19] performance: put redraw callback front of render
+
+normal flow is render-->send callback
+now flow is send callback-->render. It
+will inform client to draw in advance.
+run 5 app in ivi-controller can reach
+49fps(privious fps is 40).
+Test: test ok
+
+Change-Id: Idca3b54e73056cc2ddd175e4a0d907fde000521c
+Signed-off-by: Nelson Liu <nelson.liu@mediatek.com>
+CR-Id: AUTO00000252
+---
+ src/compositor.c | 92 +++++++++++++++++++++++++++++++++++++++-----------------
+ src/compositor.h |  4 +++
+ 2 files changed, 69 insertions(+), 27 deletions(-)
+
+diff --git a/src/compositor.c b/src/compositor.c
+index cc96fef..3c847ae 100644
+--- a/src/compositor.c
++++ b/src/compositor.c
+@@ -71,6 +71,9 @@ weston_output_transform_scale_init(struct weston_output *output,
+ static void
+ weston_compositor_build_view_list(struct weston_compositor *compositor);
+ 
++static void
++weston_page_handler_callback(struct weston_output *output);
++
+ static void weston_mode_switch_finish(struct weston_output *output,
+ 				      int mode_changed,
+ 				      int scale_changed)
+@@ -608,6 +611,7 @@ weston_surface_create(struct weston_compositor *compositor)
+ 
+ 	wl_list_init(&surface->subsurface_list);
+ 	wl_list_init(&surface->subsurface_list_pending);
++	wl_list_init(&surface->link);
+ 
+ 	weston_matrix_init(&surface->buffer_to_surface_matrix);
+ 	weston_matrix_init(&surface->surface_to_buffer_matrix);
+@@ -1965,6 +1969,8 @@ weston_surface_destroy(struct weston_surface *surface)
+ 	pixman_region32_fini(&surface->opaque);
+ 	pixman_region32_fini(&surface->input);
+ 
++	wl_list_remove(&surface->link);
++
+ 	wl_list_for_each_safe(cb, next, &surface->frame_callback_list, link)
+ 		wl_resource_destroy(cb->resource);
+ 
+@@ -2344,8 +2350,6 @@ weston_output_repaint(struct weston_output *output)
+ 	struct weston_compositor *ec = output->compositor;
+ 	struct weston_view *ev;
+ 	struct weston_animation *animation, *next;
+-	struct weston_frame_callback *cb, *cnext;
+-	struct wl_list frame_callback_list;
+ 	pixman_region32_t output_damage;
+ 	int r;
+ 
+@@ -2366,20 +2370,6 @@ weston_output_repaint(struct weston_output *output)
+ 		}
+ 	}
+ 
+-	wl_list_init(&frame_callback_list);
+-	wl_list_for_each(ev, &ec->view_list, link) {
+-		/* Note: This operation is safe to do multiple times on the
+-		 * same surface.
+-		 */
+-		if (ev->surface->output == output) {
+-			wl_list_insert_list(&frame_callback_list,
+-					    &ev->surface->frame_callback_list);
+-			wl_list_init(&ev->surface->frame_callback_list);
+-
+-			weston_output_take_feedback_list(output, ev->surface);
+-		}
+-	}
+-
+ 	compositor_accumulate_damage(ec);
+ 
+ 	pixman_region32_init(&output_damage);
+@@ -2399,11 +2389,6 @@ weston_output_repaint(struct weston_output *output)
+ 
+ 	weston_compositor_repick(ec);
+ 
+-	wl_list_for_each_safe(cb, cnext, &frame_callback_list, link) {
+-		wl_callback_send_done(cb->resource, output->frame_time);
+-		wl_resource_destroy(cb->resource);
+-	}
+-
+ 	wl_list_for_each_safe(animation, next, &output->animation_list, link) {
+ 		animation->frame_counter++;
+ 		animation->frame(animation, output, output->frame_time);
+@@ -2483,10 +2468,9 @@ weston_output_finish_frame(struct weston_output *output,
+ 	if (presented_flags == WP_PRESENTATION_FEEDBACK_INVALID && msec < 0)
+ 		msec += refresh_nsec / 1000000;
+ 
+-	if (msec < 1)
+-		output_repaint_timer_handler(output);
+-	else
+-		wl_event_source_timer_update(output->repaint_timer, msec);
++	weston_page_handler_callback(output);
++
++	output_repaint_timer_handler(output);
+ }
+ 
+ static void
+@@ -2847,6 +2831,7 @@ weston_surface_commit_state(struct weston_surface *surface,
+ 	/* wl_surface.attach */
+ 	if (state->newly_attached)
+ 		weston_surface_attach(surface, state->buffer);
++
+ 	weston_surface_state_set_buffer(state, NULL);
+ 
+ 	weston_surface_build_buffer_matrix(surface,
+@@ -2914,6 +2899,27 @@ weston_surface_commit_state(struct weston_surface *surface,
+ }
+ 
+ static void
++weston_surface_commit_pending_list(struct weston_surface *surface)
++{
++	struct weston_surface *es, *next;
++
++	if (surface->role_name)
++		wl_list_for_each_safe(es, next, &surface->compositor->pending_surfaces_list, link) {
++			if (es == surface)
++				wl_list_remove(&es->link);
++		}
++
++	wl_list_insert(&surface->compositor->pending_surfaces_list, &surface->link);
++
++	/*need to add schedule function to construct loop*/
++	if ((surface->compositor->surfaces_pend_empty) && (surface->output)) {
++		weston_page_handler_callback(surface->output);
++		surface->compositor->surfaces_pend_empty = 0;
++	}
++
++}
++
++static void
+ weston_surface_commit(struct weston_surface *surface)
+ {
+ 	surface->repaint_count ++;
+@@ -2922,7 +2928,36 @@ weston_surface_commit(struct weston_surface *surface)
+ 
+ 	weston_surface_commit_subsurface_order(surface);
+ 
+-	weston_surface_schedule_repaint(surface);
++	weston_surface_commit_pending_list(surface);
++}
++
++static void
++weston_page_handler_callback(struct weston_output *output)
++{
++	struct weston_surface *surface, *surface_tmp;
++	struct weston_frame_callback *cb, *cnext;
++	struct weston_compositor *ec = output->compositor;
++
++	// 1 stand for empty, need to construct loop
++	if (wl_list_empty(&ec->pending_surfaces_list))
++		ec->surfaces_pend_empty = 1;
++
++	wl_list_for_each_safe(surface, surface_tmp, &ec->pending_surfaces_list, link) {
++
++		weston_surface_schedule_repaint(surface);
++
++		wl_list_for_each_safe(cb, cnext, &surface->frame_callback_list, link) {
++			wl_callback_send_done(cb->resource, output->frame_time);
++			wl_resource_destroy(cb->resource);
++		}
++
++		wl_list_init(&surface->frame_callback_list);
++		weston_output_take_feedback_list(output, surface);
++		wl_list_remove(&surface->link);
++		wl_list_init(&surface->link);
++	}
++
++	wl_list_init(&ec->pending_surfaces_list);
+ }
+ 
+ static void
+@@ -2949,6 +2984,7 @@ surface_commit(struct wl_client *client, struct wl_resource *resource)
+ 		if (sub->surface != surface)
+ 			weston_subsurface_parent_commit(sub, 0);
+ 	}
++
+ }
+ 
+ static void
+@@ -3113,7 +3149,7 @@ weston_subsurface_commit_from_cache(struct weston_subsurface *sub)
+ 
+ 	weston_surface_commit_subsurface_order(surface);
+ 
+-	weston_surface_schedule_repaint(surface);
++	weston_surface_commit_pending_list(surface);
+ 
+ 	sub->has_cached_data = 0;
+ }
+@@ -4740,6 +4776,8 @@ weston_compositor_create(struct wl_display *display, void *user_data)
+ 	wl_list_init(&ec->touch_binding_list);
+ 	wl_list_init(&ec->axis_binding_list);
+ 	wl_list_init(&ec->debug_binding_list);
++	wl_list_init(&ec->pending_surfaces_list);
++	ec->surfaces_pend_empty = 0;	//use for mark pending_surfaces_list
+ 
+ 	weston_plane_init(&ec->primary_plane, ec, 0, 0);
+ 	weston_compositor_stack_plane(ec, &ec->primary_plane, NULL);
+diff --git a/src/compositor.h b/src/compositor.h
+index db439ae..d99fea4 100644
+--- a/src/compositor.h
++++ b/src/compositor.h
+@@ -830,6 +830,8 @@ struct weston_compositor {
+ 	struct wl_list touch_binding_list;
+ 	struct wl_list axis_binding_list;
+ 	struct wl_list debug_binding_list;
++	struct wl_list pending_surfaces_list;
++	int surfaces_pend_empty;
+ 
+ 	uint32_t state;
+ 	struct wl_event_source *idle_source;
+@@ -1166,6 +1168,8 @@ struct weston_surface {
+ 	struct weston_timeline_object timeline;
+ 
+ 	struct config_switch *config_switch;
++
++	struct wl_list link;
+ };
+ 
+ struct weston_subsurface {
+-- 
+1.9.1
+

@@ -1,0 +1,94 @@
+From 491f1f4558919b26c0b0d22fd7515cd7d6329509 Mon Sep 17 00:00:00 2001
+From: Nelson Liu <nelson.liu@mediatek.com>
+Date: Sat, 10 Sep 2016 21:01:47 +0800
+Subject: [PATCH 10/19] overlay: enhancement for mtk drm module
+
+1.add check if buffer can be process by mdp through drm
+Test: test ok
+
+Change-Id: I7a7a288f751b3e8add0e24e012323dfda9d05754
+Signed-off-by: Nelson Liu <nelson.liu@mediatek.com>
+CR-Id: AUTO00000252
+---
+ src/compositor-drm.c | 58 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 58 insertions(+)
+
+diff --git a/src/compositor-drm.c b/src/compositor-drm.c
+index 6aaff5f..41fdeba 100644
+--- a/src/compositor-drm.c
++++ b/src/compositor-drm.c
+@@ -1252,6 +1252,46 @@ drm_output_release_fb(struct drm_output *output, struct drm_fb *fb)
+ 		gbm_surface_release_buffer(output->gbm_surface, fb->bo);
+ }
+ 
++static int32_t
++drm_check_capacity_for_mdp(struct drm_plane *s, uint32_t format)
++{
++	switch (format) {
++	case DRM_FORMAT_ARGB4444:
++	case DRM_FORMAT_ABGR4444:
++	case DRM_FORMAT_RGBA4444:
++	case DRM_FORMAT_BGRA4444:
++
++	case DRM_FORMAT_ARGB1555:
++	case DRM_FORMAT_ABGR1555:
++	case DRM_FORMAT_RGBA5551:
++	case DRM_FORMAT_BGRA5551:
++		return -1;
++
++	case DRM_FORMAT_ARGB8888:
++		/*the only ARGB format supported by drm is ARGB8888*/
++		if (s->rotation != BIT(0) ||
++			((s->src_h >> 16) != s->dest_h) ||
++			((s->src_w >> 16) != s->dest_w) )
++			return -1;
++		else
++			return 0;
++	case DRM_FORMAT_ABGR8888:
++	case DRM_FORMAT_RGBA8888:
++	case DRM_FORMAT_BGRA8888:
++
++	case DRM_FORMAT_ARGB2101010:
++	case DRM_FORMAT_ABGR2101010:
++	case DRM_FORMAT_RGBA1010102:
++	case DRM_FORMAT_BGRA1010102:
++
++	case DRM_FORMAT_AYUV:
++		return -1;
++	default:
++		return 0;
++	}
++
++}
++
+ static uint32_t
+ drm_output_check_scanout_format(struct drm_output *output,
+ 				struct weston_surface *es, struct gbm_bo *bo)
+@@ -2484,6 +2524,24 @@ drm_output_prepare_overlay_view(struct drm_output *output,
+ 	s->rotation =
+ 		drm_plane_rotation_get_from_view(tmpTransform);
+ 
++	if (drm_check_capacity_for_mdp(s, format) != 0) {
++		/*release framebuffer, but cann't release buffer*/
++		if (s->next->bo)
++			gbm_bo_destroy(s->next->bo);
++		else if (s->next->fb_id) {
++			drmModeRmFB(gbm_device_get_fd(b->gbm), s->next->fb_id);
++			free(s->next);
++		}
++		s->next = NULL;
++
++		/*release drm plane*/
++		s->output = NULL;
++		s->view = NULL;
++
++		weston_log("mdp have no capacity to transform it.\n");
++		return NULL;
++	}
++
+ 	if (s->next != s->current)
+ 		drm_fb_set_buffer(s->next, ev->surface->buffer_ref.buffer);
+ 
+-- 
+1.9.1
+

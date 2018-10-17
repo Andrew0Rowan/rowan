@@ -1,0 +1,67 @@
+diff --git a/include/pcm_ioplug.h b/include/pcm_ioplug.h
+old mode 100644
+new mode 100755
+index e529e6a..83c47c4
+--- a/include/pcm_ioplug.h
++++ b/include/pcm_ioplug.h
+@@ -31,6 +31,8 @@
+ #ifndef __ALSA_PCM_IOPLUG_H
+ #define __ALSA_PCM_IOPLUG_H
+ 
++#define PATCH_IOPLUG_STATUS
++
+ /**
+  * \defgroup PCM_IOPlug External I/O plugin SDK
+  * \ingroup Plugin_SDK
+@@ -119,6 +121,10 @@ struct snd_pcm_ioplug {
+ 	unsigned int rate;		/**< rate; filled after hw_params is called */
+ 	snd_pcm_uframes_t period_size;	/**< period size; filled after hw_params is called */
+ 	snd_pcm_uframes_t buffer_size;	/**< buffer size; filled after hw_params is called */
++#ifdef PATCH_IOPLUG_STATUS
++	struct timespec status_tstamp;	/**< filled after status is called */
++	snd_pcm_sframes_t status_delay; /**< filled after status is called */
++#endif
+ };
+ 
+ /** Callback table of ioplug */
+@@ -206,6 +212,9 @@ struct snd_pcm_ioplug_callback {
+ 	 * set the channel map; optional; since v1.0.2
+ 	 */
+ 	int (*set_chmap)(snd_pcm_ioplug_t *io, const snd_pcm_chmap_t *map);
++#ifdef PATCH_IOPLUG_STATUS
++	int (*status)(snd_pcm_ioplug_t *io);
++#endif
+ };
+ 
+ 
+diff --git a/src/pcm/pcm_ioplug.c b/src/pcm/pcm_ioplug.c
+old mode 100644
+new mode 100755
+index 43550c0..3b23ac6
+--- a/src/pcm/pcm_ioplug.c
++++ b/src/pcm/pcm_ioplug.c
+@@ -88,6 +88,9 @@ static int snd_pcm_ioplug_channel_info(snd_pcm_t *pcm, snd_pcm_channel_info_t *i
+ static int snd_pcm_ioplug_status(snd_pcm_t *pcm, snd_pcm_status_t * status)
+ {
+ 	ioplug_priv_t *io = pcm->private_data;
++#ifdef PATCH_IOPLUG_STATUS
++	snd_pcm_ioplug_t *data = io->data;
++#endif
+ 
+ 	memset(status, 0, sizeof(*status));
+ 	snd_pcm_ioplug_hw_ptr_update(pcm);
+@@ -95,6 +98,14 @@ static int snd_pcm_ioplug_status(snd_pcm_t *pcm, snd_pcm_status_t * status)
+ 	status->trigger_tstamp = io->trigger_tstamp;
+ 	status->avail = snd_pcm_mmap_avail(pcm);
+ 	status->avail_max = io->avail_max;
++#ifdef PATCH_IOPLUG_STATUS
++	if (data->callback->status) {
++		if (data->callback->status(data) == 0) {
++			status->tstamp = data->status_tstamp;
++			status->delay = data->status_delay;
++		}
++	}
++#endif
+ 	return 0;
+ }
+ 

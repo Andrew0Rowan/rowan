@@ -1,0 +1,31 @@
+From ce9276992b922b373264ef78e5870f0d35c64cba Mon Sep 17 00:00:00 2001
+From: Changtao Hu <Changtao.Hu@mediatek.com>
+Date: Fri, 2 Dec 2016 17:38:49 +0800
+Subject: [PATCH] Mpeg audio decoder: disable mad
+
+For some mp2/mp3 file, the mad play with chaos
+Test: Pass
+
+Change-Id: I2f69e2bf0d87b9035b87dbefee6239178568f029
+Signed-off-by: Changtao Hu <Changtao.Hu@mediatek.com>
+CR-Id: AUTO00001903
+---
+ ext/mad/gstmad.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ext/mad/gstmad.c b/ext/mad/gstmad.c
+index 93337d2..191e5a2 100644
+--- a/ext/mad/gstmad.c
++++ b/ext/mad/gstmad.c
+@@ -554,7 +554,7 @@ plugin_init (GstPlugin * plugin)
+ 
+   /* FIXME 0.11: rename to something better like madmp3dec or madmpegaudiodec
+    * or so? */
+-  return gst_element_register (plugin, "mad", GST_RANK_SECONDARY,
++  return gst_element_register (plugin, "mad", GST_RANK_NONE,
+       gst_mad_get_type ());
+ }
+ 
+-- 
+1.9.1
+

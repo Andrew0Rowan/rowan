@@ -1,0 +1,49 @@
+diff --git a/Makefile.am b/Makefile.am
+new file mode 100644
+index 0000000..361667f
+--- /dev/null
++++ b/Makefile.am
+@@ -0,0 +1 @@
++SUBDIRS = libsparse/
+diff --git a/configure.ac b/configure.ac
+new file mode 100644
+index 0000000..cc354e3
+--- /dev/null
++++ b/configure.ac
+@@ -0,0 +1,12 @@
++AC_INIT([img2simg], [1.0])
++AM_INIT_AUTOMAKE([foreign])
++AC_PROG_CC
++AC_PROG_RANLIB
++AC_DISABLE_SHARED
++AC_ENABLE_STATIC
++LT_INIT
++AC_CONFIG_FILES([
++    Makefile
++    libsparse/Makefile
++])
++AC_OUTPUT
+diff --git a/libsparse/Makefile.am b/libsparse/Makefile.am
+new file mode 100644
+index 0000000..02bea1a
+--- /dev/null
++++ b/libsparse/Makefile.am
+@@ -0,0 +1,18 @@
++noinst_LIBRARIES = libsparse.a
++libsparse_a_CPPFLAGS = -I$(top_srcdir)/libsparse/include
++libsparse_a_CFLAGS = -Werror
++libsparse_a_SOURCES = \
++                    backed_block.c \
++                    output_file.c \
++                    sparse.c \
++                    sparse_crc32.c \
++                    sparse_err.c \
++                    sparse_read.c
++
++bin_PROGRAMS = img2simg simg2img
++img2simg_SOURCES = img2simg.c
++img2simg_CPPFLAGS = -I$(top_srcdir)/libsparse/include
++img2simg_LDADD = libsparse.a -lz
++simg2img_SOURCES = simg2img.c
++simg2img_CPPFLAGS = -I$(top_srcdir)/libsparse/include
++simg2img_LDADD = libsparse.a -lz

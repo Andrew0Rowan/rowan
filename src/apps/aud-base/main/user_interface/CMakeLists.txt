@@ -1,0 +1,11 @@
+INCLUDE_DIRECTORIES(../inc)
+
+AUX_SOURCE_DIRECTORY(. USER_INTERFACE)
+
+IF(${ADAPTOR_SOURCE_ADD} MATCHES 1)
+	message("ADAPTOR_SOURCE_ADD is defined in wifi_setting")
+  list(APPEND USER_INTERFACE 
+			${ADAPTOR_APP_CTRL_SOURCE}/key_press/app_ctrl_key.c)
+ENDIF()
+
+ADD_LIBRARY(user_interface ${USER_INTERFACE})

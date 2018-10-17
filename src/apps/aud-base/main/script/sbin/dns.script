@@ -1,0 +1,114 @@
+#!/bin/sh
+#	@author CC Ma
+#	@date	2009/03/26
+#	@brief
+#		dns event handling script
+#
+
+RESOLV_CONF="/etc/resolv.conf"
+
+usage() {
+	echo "Usage: $0 {set/clean} dns..."
+	exit 1
+}
+
+clean() {
+  # clean /etc/resolv.conf 
+  cat /dev/null > $RESOLV_CONF
+}
+
+show() {  
+  cat $RESOLV_CONF
+}
+ 
+takelock()
+{
+   while [ -f "/tmp/dns_lock_fd" ]; do
+   :
+   echo "lock dns file now!"
+   sleep 1;
+   done
+   echo 1 > "/tmp/dns_lock_fd"
+} 
+
+givelock()
+{
+   rm /tmp/dns_lock_fd
+}
+
+
+rmV4DNS(){
+   cat /etc/resolv.conf | grep : > /var/dns6   
+   cat /var/dns6 > /etc/resolv.conf
+}
+ 
+rmV6DNS(){
+   cat /etc/resolv.conf | grep -v : > /var/dns4 
+   cat /var/dns4 > /etc/resolv.conf
+}
+
+ 
+count=1
+if [ $# \< $count ] ; then
+	usage
+fi
+
+
+
+	  takelock;     
+case "$1" in 
+	
+	set)	 
+	
+    rmV4DNS;
+		i=2
+		total=$#		
+		while [ $i -le $total ];
+		do
+		  shift
+		  dns=$1
+		  echo "adding dns " $dns
+		  echo nameserver "$dns" >> $RESOLV_CONF
+		  i=`expr $i + 1`		   
+		done		
+		show
+		;;		
+		
+	setv6)	 
+	
+    rmV6DNS;
+		i=2
+		total=$#		
+		while [ $i -le $total ];
+		do
+		  shift
+		  dns=$1
+			if grep -q $dns $RESOLV_CONF ; then
+				echo "dns($1) already exsit"
+			else
+		  echo "adding dns " $dns
+		  echo nameserver "$dns" >> $RESOLV_CONF
+			fi	  
+		  i=`expr $i + 1`		   
+		done		
+		show
+		;;
+
+
+  rmv4)
+    rmV4DNS
+   ;;
+  rmv6)
+    rmV6DNS
+   ;; 
+  
+     
+	clean)
+		clean
+		;;
+		
+	*)
+		usage
+	;;	
+esac
+  givelock;

@@ -1,0 +1,12 @@
+[Unit]
+Description=Appmainprog
+After=mt7668_bt_drv_insmod.service btservice.service 
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /usr/bin/appmainprog.sh >ttyS0
+StandardOutput=tty
+StandardError=tty
+
+[Install]
+WantedBy=multi-user.target

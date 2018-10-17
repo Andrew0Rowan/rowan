@@ -1,0 +1,82 @@
+#! /bin/sh
+# usage:
+# dhcpv6.script eth0 ip
+# dhcpv6.script eth0 dns
+# dhcpv6.script eth0 ipdns
+# dhcpv6.script stop
+
+kill $(cat /var/lib/dibbler/client.pid)
+
+echo "dnsdnsdnsdnsdnsdnsdnsdnsdnsdns-------remove /var/lib/dibbler/client-AddrMgr.xml"
+rm -rf /var/lib/dibbler/client-AddrMgr.xml
+rm -rf /var/lib/dibbler/client.pid
+rm -rf /var/lib/dibbler/notify_log
+
+if test $1 = "stop"; then
+exit
+fi
+
+#add notify file for dibbler
+if [-f /var/lib/dibbler/notify]; then
+echo "dibbler client notify info:"
+cat /var/lib/dibbler/notify
+else
+mkdir -p /var/lib/dibbler/
+cp -f /sbin/notify /var/lib/dibbler/notify
+chmod 777 /var/lib/dibbler/notify
+fi
+
+
+rm -rf /tmp/tmpclient.conf
+
+
+echo "log-mode short" > /tmp/tmpclient.conf
+echo "log-level 8" >> /tmp/tmpclient.conf
+echo " " >> /tmp/tmpclient.conf
+
+if test $2 = "dns"; then
+    echo "stateless" >> /tmp/tmpclient.conf
+fi
+
+echo "notify-scripts" >> /tmp/tmpclient.conf
+
+echo "iface '$1'" >> /tmp/tmpclient.conf
+echo "{" >> /tmp/tmpclient.conf
+
+if test $2 = "ip"; then
+    echo " ia" >> /tmp/tmpclient.conf
+fi
+
+if test $2 = "dns"; then
+    echo " option dns-server" >> /tmp/tmpclient.conf
+fi
+
+if test $2 = "ipdns"; then
+    echo " ia" >> /tmp/tmpclient.conf
+    echo " option dns-server" >> /tmp/tmpclient.conf
+fi
+
+echo " option lifetime" >> /tmp/tmpclient.conf
+echo "}" >> /tmp/tmpclient.conf
+
+cat /tmp/tmpclient.conf > /etc/dibbler/client.conf
+/sbin/dibbler-client run &
+
+loop=1
+
+while [ ! -e "/var/lib/dibbler/notify_log" ]
+do
+    if [ $loop -le 10 ]; then
+        sleep 2
+        loop=$(( $loop + 1 ))
+    else
+		echo "[addlog]ipv6 wait timeout and exit"
+        #kill `cat /var/lib/dibbler/client.pid`
+        #rm -rf /var/lib/dibbler/client.pid
+        #rm -rf /var/lib/dibbler/notify_log
+        exit 1 
+    fi
+done
+
+exit 0
+

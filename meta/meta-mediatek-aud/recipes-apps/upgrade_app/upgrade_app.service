@@ -1,0 +1,10 @@
+[Unit]
+Description=upgrade_app
+
+[Service]
+ExecStart=/bin/upgrade_app
+Type=simple
+
+[Install]
+Alias=upgrade
+WantedBy=multi-user.target

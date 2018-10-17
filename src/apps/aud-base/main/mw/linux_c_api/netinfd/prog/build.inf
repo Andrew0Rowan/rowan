@@ -1,0 +1,26 @@
+[build_linux_prog]
+TARGETNAME = netinfd
+TARGETTYPE = program
+INSTALL_PATH = /sbin
+
+SOURCES = \
+          netinfd.c \
+
+
+
+DIRS =  \
+
+
+CCFLAGS += \
+
+INCLUDES += \
+            ./ \
+
+LINKFLAGS +=  \
+	-Lbuild_linux_dll/src_ind/so/ipcd \
+	-lipcdso \
+	-lpthread \
+	-Lbuild_linux_dll/src_ind/so/skmem \
+	-lskmem \
+
+

@@ -1,0 +1,58 @@
+From c0739b7e549c67525d216daf72c250f0dac34de0 Mon Sep 17 00:00:00 2001
+From: Nelson Liu <nelson.liu@mediatek.com>
+Date: Wed, 7 Sep 2016 09:38:26 +0800
+Subject: [PATCH 01/19] hmi-controller: use output_w/h instead of
+ current_mode_w/h
+
+make use of output->w/h instead of output->current_mode->w/h,
+output->w/h have involve factor of transform and scale
+Test: tesk ok
+
+Change-Id: Ia390553137f4bd2bed4dea28948c2a59c9ccba7f
+Signed-off-by: Nelson Liu <nelson.liu@mediatek.com>
+CR-Id: AUTO00000252
+---
+ ivi-shell/hmi-controller.c | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/ivi-shell/hmi-controller.c b/ivi-shell/hmi-controller.c
+index 97f78af..651418a 100644
+--- a/ivi-shell/hmi-controller.c
++++ b/ivi-shell/hmi-controller.c
+@@ -786,8 +786,8 @@ hmi_controller_create(struct weston_compositor *ec)
+ 		base_layer = MEM_ALLOC(1 * sizeof(struct hmi_controller_layer));
+ 		base_layer->x = 0;
+ 		base_layer->y = 0;
+-		base_layer->width = output->current_mode->width;
+-		base_layer->height = output->current_mode->height;
++		base_layer->width = output->width;
++		base_layer->height = output->height;
+ 		base_layer->id_layer =
+ 			hmi_ctrl->hmi_setting->base_layer_id +
+ 						(i * hmi_ctrl->hmi_setting->base_layer_id_offset);
+@@ -806,8 +806,8 @@ hmi_controller_create(struct weston_compositor *ec)
+ 		application_layer = MEM_ALLOC(1 * sizeof(struct hmi_controller_layer));
+ 		application_layer->x = 0;
+ 		application_layer->y = 0;
+-		application_layer->width = output->current_mode->width;
+-		application_layer->height = output->current_mode->height - panel_height;
++		application_layer->width = output->width;
++		application_layer->height = output->height - panel_height;
+ 		application_layer->id_layer =
+ 			hmi_ctrl->hmi_setting->application_layer_id +
+ 						(i * hmi_ctrl->hmi_setting->base_layer_id_offset);
+@@ -823,9 +823,9 @@ hmi_controller_create(struct weston_compositor *ec)
+ 	hmi_ctrl->workspace_background_layer.x = 0;
+ 	hmi_ctrl->workspace_background_layer.y = 0;
+ 	hmi_ctrl->workspace_background_layer.width =
+-		output->current_mode->width;
++		output->width;
+ 	hmi_ctrl->workspace_background_layer.height =
+-		output->current_mode->height - panel_height;
++		output->height - panel_height;
+ 
+ 	hmi_ctrl->workspace_background_layer.id_layer =
+ 		hmi_ctrl->hmi_setting->workspace_background_layer_id;
+-- 
+1.9.1
+

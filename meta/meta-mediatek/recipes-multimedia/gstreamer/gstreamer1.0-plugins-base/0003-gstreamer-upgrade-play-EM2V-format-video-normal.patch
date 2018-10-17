@@ -1,0 +1,29 @@
+From 2971aeb167fec38bf2970a6665f5b5881db75c57 Mon Sep 17 00:00:00 2001
+From: Changtao Hu <changtao.hu@mediatek.com>
+Date: Thu, 22 Jun 2017 09:55:39 +0800
+Subject: [PATCH] gstreamer upgrade: play EM2V format video normal
+
+Make patch for gstreamer upgrade
+Test: OK
+
+Signed-off-by: Changtao Hu <changtao.hu@mediatek.com>
+CR-Id: AUTO00005189
+---
+ gst-libs/gst/riff/riff-media.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/gst-libs/gst/riff/riff-media.c b/gst-libs/gst/riff/riff-media.c
+index 188360a..86b9248 100644
+--- a/gst-libs/gst/riff/riff-media.c
++++ b/gst-libs/gst/riff/riff-media.c
+@@ -261,6 +261,7 @@ gst_riff_create_video_caps (guint32 codec_fcc,
+     case GST_MAKE_FOURCC ('m', 'p', 'g', '2'):
+     case GST_MAKE_FOURCC ('P', 'I', 'M', '2'):
+     case GST_MAKE_FOURCC ('D', 'V', 'R', ' '):
++    case GST_MAKE_FOURCC ('E', 'M', '2', 'V'):
+     case GST_MAKE_FOURCC (0x02, 0x00, 0x00, 0x10):
+       caps = gst_caps_new_simple ("video/mpeg",
+           "systemstream", G_TYPE_BOOLEAN, FALSE,
+-- 
+1.9.1
+

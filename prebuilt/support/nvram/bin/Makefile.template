@@ -1,0 +1,441 @@
+###
+#	@file Makefile.template
+#   @breif This is the file user has to setup locally for different host environment
+#
+#	@param VOBJ	object files applicable for compilation
+#	@param LOBJ object files included in lib$(NAME).a
+#	@param COBJ object files applicable to standard-make-targets
+#
+#	@author Howard Chen
+##
+GCC ?= $(CROSS)gcc
+CC ?= $(GCC)
+CXX ?= $(CROSS)g++
+OBJDUMP = $(CROSS)objdump
+OBJCOPY = $(CROSS)objcopy
+AR		= $(CROSS)ar
+
+SUBLPATH?= $(SUBVPATH)
+INCLUDE ?= $(DEF_INCLUDE)
+CFLAGS	?= $(DEF_CFLAGS)
+ASFLAGS ?= $(DEF_ASFLAGS)
+LDFLAGS	?= $(DEF_LDFLAGS)
+DOC_GEN ?= $(PREFIX)/APITemp.txt
+
+VPATH	?= src $(SUBVPATH)
+VOBJ 	?= 	$(patsubst %.S,%.o, \
+			$(patsubst %.s,%.o, \
+			$(patsubst %.c,%.o, \
+			$(patsubst %.cpp, %.o, \
+				$(notdir $(foreach DIR,$(VPATH),\
+					$(wildcard $(DIR)/*.S)	\
+					$(wildcard $(DIR)/*.s)	\
+					$(wildcard $(DIR)/*.c) 	\
+					$(wildcard $(DIR)/*.cpp)))))))
+
+LPATH	?= src $(SUBLPATH)
+LOBJ 	?= 	$(patsubst %.S,%.o, \
+			$(patsubst %.s,%.o, \
+			$(patsubst %.c,%.o, \
+			$(patsubst %.cpp, %.o, \
+				$(notdir $(foreach DIR,$(LPATH),\
+					$(wildcard $(DIR)/*.S)	\
+					$(wildcard $(DIR)/*.s)	\
+					$(wildcard $(DIR)/*.c) 	\
+					$(wildcard $(DIR)/*.cpp)))))))
+COBJ    ?=	$(patsubst %.c,%.o, \
+			$(patsubst %.cpp, %.o, \
+				$(notdir $(foreach DIR,$(VPATH),\
+					$(wildcard $(DIR)/*.c) 	\
+					$(wildcard $(DIR)/*.cpp)))))
+DEP 	= $(COBJ:%.o=%.d)
+TEST	= $(COBJ:%.o=%.x)
+RUNS	= $(COBJ:%.o=%.x.run)
+
+MIN ?=1
+
+default: all
+
+%.d: %.cpp
+	@wimac_conf.pl $(NAME) "$(CONFIG)"
+ifeq ($(strip $(STRICT)),1)
+	@wimac_rul.sh $<
+endif
+	@$(GCC) -M $(INCLUDE) -D _UNIT_ -D _EXE_ $(CONFIG) $< > $@
+
+%.d: %.c
+	@wimac_conf.pl $(NAME) "$(CONFIG)"
+ifeq ($(strip $(STRICT)),1)
+	@wimac_rul.sh $<
+endif
+#ifeq ($(strip $(MAKE_INDEX)),1)
+#	@wimac_parse_idx.sh $<
+#endif
+	@$(GCC) -M $(INCLUDE) -D _UNIT_ -D _EXE_ $(CONFIG) $< > $@
+
+%.e : %.cpp %.d
+	$(CXX) $(INCLUDE) $(CONFIG) -E $< > $(notdir $(<:%.cpp=%.e.cpp))
+
+%.e : %.c %.d
+	$(CC) $(CFLAGS) $(INCLUDE) $(CONFIG) -E $< > $(notdir $(<:%.c=%.e.c))
+
+%.o : %.cpp %.d
+	$(CXX) $(CXXFLAGS) $(INCLUDE) $(CONFIG) -c $<
+
+%.o : %.c %.d
+	$(CC) $(CFLAGS) $(INCLUDE) $(CONFIG) -c $<
+
+%.o: %.S
+	$(GCC) $(ASFLAGS) $(INCLUDE) $(CONFIG) -c $<
+
+%.o: %.s
+	$(GCC) $(ASFLAGS) $(INCLUDE) $(CONFIG) -c -x assembler-with-cpp $<
+
+%.o.text: %.o
+	$(CROSS)objdump -DS $^ > $@
+
+%.exe: %.elf
+	@cp $^ $@
+
+%.elf: %.c $(LIB)
+	$(CC) $(CFLAGS) $(INCLUDE) $(CONFIG) -D _EXE_ -o $(notdir $(<:%.c=%.e.o)) -c $<
+	$(GCC) -o $@ $(notdir $(<:%.c=%.e.o)) $(LDFLAGS)
+
+%.elf: %.cpp $(LIB)
+	$(CC) $(CXXFLAGS) $(INCLUDE) $(CONFIG) -D _EXE_ -o $(notdir $(<:%.cpp=%.e.o)) -c $<
+	$(GCC) -o $@ $(notdir $(<:%.cpp=%.e.o)) $(LDFLAGS)
+
+%.elf.run:
+	@echo ""
+	@printf "%s%-8s%s\n" "-----[ " "$(@:%.elf.run=%)" " ]------------------------------------------------------"
+	@echo ""
+	$(RUN)$(@:%.x.run=%.x)
+
+%.elf.debug: %.elf
+	ddd --debugger $(CROSS)gdb $^
+
+%.elf.text: %.elf
+	$(CROSS)objdump -DS $^ > $@
+
+%.elf.srec: %.elf
+	$(CROSS)objcopy -Osrec $^ $@
+
+%.elf.hex8: %.elf.srec
+	srec2hex.exe $^ -p $(HEXPAD) > $@	
+
+%.elf.hex16: %.elf.srec
+	srec2hex.exe $^ -p $(HEXPAD) -2 > $@	
+
+%.elf.hex32: %.elf.srec
+	srec2hex.exe $^ -p $(HEXPAD) -4 > $@	
+
+%.elf.img: %.elf
+	$(OBJCOPY) --strip-debug $^ $@
+
+%.elf.bin: %.elf.img
+	$(OBJCOPY) -O binary $^ $@
+
+%.elf.bin.gz: %.elf.bin
+	gzip -c $^ > $@
+	
+%.elf.verilog:
+	@rm -f $(@:%.elf.verilog=%.elf)
+	@make $(@:%.elf.verilog=%.elf.text) LD_SCRIPT=-Tverilog.ld
+	@make $(@:%.elf.verilog=%.elf.hex8) LD_SCRIPT=-Tverilog.ld
+	@make $(@:%.elf.verilog=%.elf.hex16) LD_SCRIPT=-Tverilog.ld
+	@make $(@:%.elf.verilog=%.elf.hex32) LD_SCRIPT=-Tverilog.ld
+
+%.elf.sim %.elf.sim.dual %.elf.sim.app:
+	@rm -f $*.elf;														\
+if [ $(NAME) == "base" ]; then													\
+	startup=startupsim$(subst .,_,$(subst .sim,,$(suffix $@))).o;								\
+else																\
+	startup=$(ROOT)/${base_libdir}/startupsim$(subst .,_,$(subst .sim,,$(suffix $@))).o;						\
+fi;																\
+	make $*.elf.text DEP_LIBS="$(SIM_LIBS)" STARTUP=$$startup LD_SCRIPT=-Tsim$(filter app,$(subst .,,$(suffix $@))).ld;	\
+	wimac_gen_sim.sh $*.elf
+
+%.x: %.c $(LIB)
+	$(CC) $(CFLAGS) $(INCLUDE) $(CONFIG) -D _UNIT_ -o $(notdir $(<:%.c=%.x.o)) -c $<
+ifeq ($(strip $(STRICT)),1)
+	$(CROSS)nm $(notdir $(<:%.c=%.x.o)) | grep main
+endif
+	$(GCC) -o $@ $(notdir $(<:%.c=%.x.o)) $(LDFLAGS)
+
+%.x: %.cpp $(LIB)
+	$(CC) $(CXXFLAGS) $(INCLUDE) $(CONFIG) -D _UNIT_ -o $(notdir $(<:%.cpp=%.x.o)) -c $<
+	$(CXX) -o $@ $(notdir $(<:%.cpp=%.x.o)) $(LDFLAGS)
+
+%.x.run:
+	@echo ""
+	@printf "%s%-8s%s\n" "-----[ " "$(@:%.x.run=%)" " ]------------------------------------------------------"
+	@echo ""
+	$(RUN)$(@:%.x.run=%.x)
+
+%.x.debug: %.x
+	ddd --debugger $(CROSS)gdb $^
+
+%.x.text: %.x
+	$(CROSS)objdump -DS $^ > $@
+
+%.x.srec: %.x
+	$(CROSS)objcopy -Osrec $^ $@
+
+%.x.hex8: %.x.srec
+	srec2hex.exe $^ -p $(HEXPAD) > $@
+
+%.x.hex16: %.x.srec
+	srec2hex.exe $^ -p $(HEXPAD) -2 > $@	
+
+%.x.hex32: %.x.srec
+	srec2hex.exe $^ -p $(HEXPAD) -4 > $@	
+
+%.x.img: %.x
+	$(OBJCOPY) --strip-debug $< $@
+
+%.x.bin: %.x.img
+	$(OBJCOPY) -O binary $< $@
+
+%.x.bin.gz: %.x.bin
+	gzip -c $^ > $@
+	
+%.x.verilog:
+	@rm -f $(@:%.x.verilog=%.x)
+	@make $(@:%.x.verilog=%.x.text) LD_SCRIPT=-Tverilog.ld
+	@make $(@:%.x.verilog=%.x.hex8) LD_SCRIPT=-Tverilog.ld
+	@make $(@:%.x.verilog=%.x.hex16) LD_SCRIPT=-Tverilog.ld
+	@make $(@:%.x.verilog=%.x.hex32) LD_SCRIPT=-Tverilog.ld
+
+%.x.sim %.x.sim.dual %.x.sim.app:
+	@rm -f $*.x;														\
+if [ $(NAME) == "base" ]; then													\
+	startup=startupsim$(subst .,_,$(subst .sim,,$(suffix $@))).o;								\
+else																\
+	startup=$(ROOT)/${base_libdir}/startupsim$(subst .,_,$(subst .sim,,$(suffix $@))).o;						\
+fi;																\
+	make $*.x.text DEP_LIBS="$(SIM_LIBS)" STARTUP=$$startup LD_SCRIPT=-Tsim$(filter app,$(subst .,,$(suffix $@))).ld;	\
+	wimac_gen_sim.sh $*.x
+
+sinclude $(DEP)
+
+lib$(NAME).a:$(LOBJ)
+	$(AR) r $@ $?
+
+lib$(NAME).so:$(LOBJ)
+	@rm -f $@
+	$(GCC) -shared -o _$@ $^ $(LDFLAGS)
+	@mv _$@ $@
+
+$(NAME).dll:$(LOBJ)
+	$(CROSS)dlltool $(LOBJ) --export-all-symbols --output-def $(NAME).def
+	$(CROSS)dllwrap $(LOBJ) -def $(NAME).def -o $@ $(LDFLAGS)
+
+$(NAME).lib:$(NAME).dll
+	$(CROSS)dlltool --def $(NAME).def --output-lib $(NAME).lib
+
+signature.text:
+	@bash -c 'if [ "$(CROSS)" == "" ] ; then \
+				echo "native" > signature.text; \
+			  else	\
+				echo $(CROSS) > signature.text; \
+			  fi'
+
+.PHONY:_dep_check _signature info.text
+_dep_check:
+	@echo ""
+	@echo "dependency checking"
+	@bash -c 'for d in $(DEP_LIBS); do\
+				if 	[ "$$(echo $(LIB) | grep lib$$d.a)" != "" ] || \
+					[ "$$(echo $(LIB) | grep $$d.dll)" != "" ]  || \
+					[ "$$(echo $(LIB) | grep lib$$d.so)" != "" ]; then\
+					continue; \
+			 	elif [ ! -f $(ROOT)/${base_libdir}/lib$$d.a ] && \
+					 [ ! -f $(ROOT)/${base_libdir}/$$d.dll ] && \
+					 [ ! -f $(ROOT)/${base_libdir}/lib$$d.so ] && \
+			 	     [ ! -f $(ROOT)/${libdir}/lib$$d.a ] && \
+					 [ ! -f $(ROOT)/${libdir}/$$d.dll ] && \
+					 [ ! -f $(ROOT)/${libdir}/lib$$d.so ] ; then\
+					echo "[NO INSTALL]: $$d"; \
+					echo " "; \
+					exit 1;\
+				else \
+					echo "[INSTALLED]: $$d "; \
+				fi; \
+			 done'
+	@bash -c 'for d in $(DEP_MODS); do\
+				if	[ -e $(ROOT)/usr/include/asm/arch/$(DEP_MODS) ]; then\
+					echo "[INSTALLED]: mod-$$d"; \
+				else \
+					echo "[NO INSTALL]: mod-$$d"; \
+					exit 1;\
+				fi;\
+			done'
+
+_signature: signature.text
+	@bash -c 'if [ "$(CROSS)" == "" ] ; then \
+				 export cross=native; \
+			  else	\
+				 export cross=$(CROSS) ;\
+			  fi ; \
+			  if [ "`cat signature.text | grep $$cross `" == "" ]; then\
+				echo "target conflict!!"; \
+				echo -n "original: "; \
+				cat signature.text; \
+				echo "current:  $$cross"; \
+				exit 1;\
+			  fi'
+
+info.text:
+ifeq ($(strip $(DEP_LIBS_AUTO)),1)
+	@echo DEP_LIBS=$(shell wimac_dep.sh $(NAME) "$(DEP_LIBS)" "$(DEP_LIBS_EX)") > $@
+else
+	@echo DEP_LIBS=$(DEP_LIBS) > $@
+endif
+
+_config:
+	@wimac_conf.pl $(NAME) "$(CONFIG)"
+
+all: _dep_check signature.text _signature _config $(ALL) lib
+
+gen_dir:
+	mkdir -p $(ROOT)/bin
+	mkdir -p $(ROOT)/${base_libdir}
+	mkdir -p $(ROOT)/include/$(NAME)
+ifeq ($(strip $(MIN)),1)
+	mkdir -p $(ROOT)/doc
+else
+	mkdir -p $(ROOT)/doc/$(NAME)
+endif
+
+	mkdir -p $(ROOT)/test/$(NAME)
+ifeq ($(strip $(MAKE_INDEX)),1)
+	mkdir -p $(ROOT)/doc/index/$(NAME) 
+endif
+
+ifeq ($(strip $(MLOG_MODULE)),1) 
+ifneq ($(shell echo $(CROSS) | grep -e "arm-none-linux-"),)
+.PHONY:mlog_cksrc
+mlog_cksrc:
+	@$(PREFIX)/bin/mlog.pl -C
+.PHONY:mlog_parse
+mlog_parse:
+	@$(PREFIX)/bin/mlog.pl -P
+endif
+endif
+
+#install: all doc gen_dir $(INSTALL)
+install: doc gen_dir $(INSTALL)
+	rm -f $(ROOT)/${base_libdir}/lib$(NAME).* $(ROOT)/${base_libdir}/$(NAME).dll
+ifneq ($(strip $(LIB)), dummy)
+	install -p $(LIB) $(ROOT)/${base_libdir}/
+endif
+	bash -c 'if ls *.x > /dev/null 2>&1 ; then install *.x $(ROOT)/test/$(NAME); fi'
+	bash -c 'if [ -e include ]; then rm -rf $(ROOT)/include/$(NAME)/*; cp -r include/* $(ROOT)/include/$(NAME)/; fi'
+ifeq ($(strip $(MIN)),1)
+else
+	install -p doc/html/* $(ROOT)/doc/$(NAME)/
+endif
+	cp module.files $(ROOT)/doc/$(NAME).files
+	cp info.text    $(ROOT)/doc/$(NAME).info
+ifeq ($(strip $(MAKE_INDEX)),1)
+	wimac_gen_idx.sh $(ROOT) $(NAME)
+endif
+ifeq ($(strip $(MLOG_MODULE)),1) 
+ifneq ($(shell echo $(CROSS) | grep -e "arm-none-linux-"),)
+	@$(PREFIX)/bin/mlog.pl -P
+endif
+endif
+
+lib: $(LIB)
+	@echo "[lib ] done"
+
+test.list.text:
+	@wimac_tst.sh
+
+test: $(TEST) test.list.text
+	@echo "[test] done"
+
+testrun: $(COBJ:%.o=%.x.run)
+	@echo "[testrun] done"
+
+run: $(RUNS)
+	@echo "[run] done"
+
+clean: $(CLEAN)
+	rm -f include/conf_$(NAME).h *.o *.so *.files *.a *.x *.lib *.def *.dll *.elf *.d *.text *.img *.srec *.bin *.hex *.short *.hex8
+	rm -rf doc index
+
+ifeq ($(strip $(MIN)),1)
+doc: info.text module.files
+	@touch module.files
+#	@mkdir -p doc/html && touch doc/html/index.html
+else
+doc: info.text module.files $(wildcard include/*.h) $(DOC_GEN) $(DOC)
+	mkdir -p doc include 
+	cat $(DOC_GEN)	| sed -e 's/PNAME/lib$(NAME)/' > API.text
+	doxygen API.text
+	mkdir -p $(ROOT)/doc
+	wimac_doc.sh $(ROOT) > $(ROOT)/doc/index.html
+endif
+
+indent:
+	indent -kr -i8 `find -name "*.[h,c]"`
+
+module.files:
+	-find `pwd`/src `pwd`/include -name "*.h" -or -name "*.hxx" -or -name "*.[cCsS]" \
+	  -or -name "*.cxx" -or -name "*.cpp" -or -name "*.inl" > module.files
+
+index:module.files
+	@bash -c 'rm -f cscope.files ; \
+			 LIST=$$(ls $(ROOT)/doc/*.files 2>/dev/null) ; \
+			 for T in $$LIST; do \
+			 	if [ $$T != $(ROOT)/doc/$(NAME).files ]; then \
+			 		cat $$T >> cscope.files; \
+				fi ; \
+				done'
+	cat module.files >> cscope.files
+	cscope -b -c -icscope.files
+
+alltargets:
+	@bash -c 'for T in $(CROSS_SUP) ; \
+			  do	\
+			     T=$${T#native};	\
+			     echo "building CROSS=$$T" ;\
+				 make clean			|| exit 1 ;\
+				 make install CROSS=$$T || exit 1 ;\
+			  done; \
+			  make clean || exit 1'
+
+target:
+	@bash -c 'select T in $(CROSS_SUP); do	\
+				if [ $$T ] ; then			\
+				 	break;					\
+				else 						\
+					echo "invalid target"; 	\
+				fi ;						\
+			  done;							\
+			  if [ "$$T" = "native" ] ; then\
+			  	T=;							\
+			  fi;							\
+			  echo "building CROSS=$$T";	\
+			  make clean			 || exit 1;\
+			  make CROSS=$$T		 || exit 1;\
+			  make install CROSS=$$T || exit 1;\
+			  make clean || exit 1'
+
+auto_dep:
+	@wimac_auto.sh $(ROOT) "$(DEP_LIBS)" "$(LIB)" $(NAME) $(CROSS)
+
+auto: auto_dep all
+
+info:
+	@echo -n "current    : "
+	@echo DEP_LIBS=$(DEP_LIBS)
+	@echo -n "calculated : DEP_LIBS="
+	@wimac_dep.sh $(NAME) "$(DEP_LIBS)" "$(DEP_LIBS_EX)"
+	
+var:
+	@echo '$(VAR)'
+
+nfs_export:
+	wimac_nfsexport.sh

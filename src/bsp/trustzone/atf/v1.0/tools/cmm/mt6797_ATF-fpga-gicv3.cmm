@@ -1,0 +1,285 @@
+;*****************************************************************************
+;  Copyright Statement:
+;  --------------------
+;  This software is protected by Copyright and the information contained
+;  herein is confidential. The software may not be copied and the information
+;  contained herein may not be used or disclosed except with the written
+;  permission of MediaTek Inc. (C) 2011
+;
+;*****************************************************************************
+;;================================================
+;; PURPOSE:     FPGA Bring Up
+;; CREATE_DATE: 2015/03/30
+;; NOTE:
+;;================================================
+; Specify Core Number
+;=================================================
+
+&NR_CPUS=1
+; cluster 0 corebase: 0x8007000, 0x8007200, 0x8007400, 0x8007600
+; cluster 1 corebase: 0x8009000, 0x8009200, 0x8009400, 0x8009600
+
+;=================================================
+; Initialize CPU
+;=================================================
+&WDT_TEST=0
+if &WDT_TEST==0
+(
+	RESET
+	SYSTEM.OPTION ENRESET ON
+)
+
+SYSTEM.RESET
+SYSTEM.OPTION ENRESET ON
+SYSTEM.OPTION RESBREAK OFF
+SYSTEM.OPTION WAITRESET OFF
+
+SYSTEM.JTAGCLOCK 10.MHz;
+
+;SYSTEM.CPU CortexA7MPCore
+SYStem.CPU CORTEXA53;
+
+;R-T Memory Access
+SYSTEM.MULTICORE MEMORYACCESSPORT 0
+SYSTEM.MULTICORE DEBUGACCESSPORT 1
+
+;SYSTEM.MULTICORE COREBASE APB:0x80070000
+;Setting Core debug register access
+if &NR_CPUS==1
+(
+    SYStem.CONFIG CORENUMBER 1;
+    SYStem.CONFIG COREBASE 0x80410000;
+    SYStem.CONFIG CTIBASE 0x80420000;
+)
+else
+(
+    SYSTEM.CONFIG CORENUMBER 2;
+    SYSTEM.CONFIG COREBASE 0x80810000 0x80910000;
+    SYStem.CONFIG CTIBASE 0x80820000 0x80920000;
+)
+
+;=================================================
+; Attach and Stop CPU
+;=================================================
+SYStem.Up
+wait 200.us
+
+SETUP.IMASKHLL ON
+SETUP.IMASKASM ON
+
+;Disable acinactm
+;d.s c:0x1020002c  %le %long 0x8
+;d.s c:0x1020022c  %le %long 0x8
+
+
+;=================================================
+; Initialize EMI
+;=================================================
+&init_emi=1 ; 0: not init
+            ; 1: init
+IF &init_emi==1
+(
+; Init DDR
+;do MTxxxx_FPGA_DDR.cmm
+  do EVEREST_FPGA_DDR
+  wait 3000.ms
+)
+
+
+;D.S SD:0x00000000 %LE %LONG 0xEAFFFFFE
+;D.S SD:0x10006000 %LE %LONG 0x0b160001
+;D.S SD:0x100062A0 %LE %LONG 0x7C
+;D.S SD:0x100062B0 %LE %LONG 0x7C
+
+
+;enable L2C 256KB
+D.S SD:0x10220000 %LE %LONG 0x00000100 ;Enable L2C share SRAM, cluster 0
+D.S SD:0x10220000 %LE %LONG 0x00001100 ;Enable L2C share SRAM, cluster 0
+
+
+
+
+; MSDC FPGA DTB: Card power(GPIO3), MSDC Bus 3.3V(GPIO2), MSDC Bus 1.8V(GPIO1) control
+; Set GPIO direction
+;D.S SD:0x10001E88 %LE %LONG 0xFF00
+; Set GPIO output value
+;D.S SD:0x10001E84 %LE %LONG 0x5500
+
+; set_hw_breakpoint_by_def
+; setting attribute of breakpoints
+Break.Select Program OnChip
+Break.Select Hll OnChip
+Break.Select Spot OnChip
+Break.Select Read OnChip
+Break.Select Write OnChip
+
+D.S C15:0x1 0				; Turn off MMU
+
+; disable wdt (debug purpose)
+D.S SD:0x10007000 %LE %LONG 0x22000000
+
+; board init
+
+Register.Set T 0 ; must
+
+;set break point for tiny bootloader deadloop position
+;b.s 0x205922
+
+;PRINT "Wait preloader Enter while(1);"
+;GO
+;WAIT 3.s
+
+;d.load.elf ../../bin/preloader.elf
+; ABTC change the ouput folder
+;
+PRINT "Load preloader BIN(Binary Only)..."
+;D.LOAD.ELF ../../../../../bootable/bootloader/preloader/bin/preloader.elf /noclear
+D.LOAD.BINARY ./bin/preloader_fpga_everest_64_NO_GFH_NO_dram_init_NO_load_LK_ATF.bin 0x00201000 /noclear
+
+; normal virsion lk
+;D.LOAD.BINARY ../../../../../out/target/product/mtxxxx_fpga/obj/BOOTLOADER_OBJ/build-mtxxxx_fpga/lk-no-mtk-header.bin 0x41E00000 /noclear
+;D.LOAD.BINARY ../../../../../out/target/product/evb6735_64_atf1/obj/BOOTLOADER_OBJ/build-evb6735_64_atf1/lk-no-mtk-header.bin 0x41E00000 /noclear
+;D.LOAD.BINARY ./bin/mt6797_lk-no-mtk-header.bin 0x41E00000 /noclear
+;d.load.elf ../../../../../out/target/product/fpga_everest_64/obj/BOOTLOADER_OBJ/build-fpga_everest_64/lk /noclear
+;d.load.elf ../../../../../out/target/product/fpga6797_64_ldvt/obj/BOOTLOADER_OBJ/build-fpga6797_64_ldvt/lk /noclear
+d.load.elf ./bin/lk-no-emmc /noclear
+
+; simple uart log in lk
+;D.LOAD.BINARY ../../tools/cmm/bin/simple_uart_log_lk-no-mtk-header.bin 0x41E00000 /noclear
+
+
+PRINT "Load ATF ELF..."
+;d.load.elf ../../../out/build/debug/bl31/bl31.elf
+d.load.elf ../../../../../out/target/product/fpga6797_64_ldvt/trustzone/ATF_OBJ/debug/bl31/bl31.elf /noclear
+
+; /noclear means no clear symbol table
+;d.load.elf ../../../../out/target/product/mtxxxx_fpga/obj/PRELOADER_OBJ/bin/preloader.elf /nocode
+
+PRINT "Load boot.img"
+data.load.binary ../../../../../out/target/product/fpga6797_64_ldvt/boot.img 0x44fff800 /noclear
+
+r.s pc 0x00201000
+
+Register.Set T 0 ; must
+
+PRINT "Wait preloader Enter while(1);"
+;GO
+;WAIT 3.s
+
+Y.SPATH.RESET ; reset all source path
+Y.SPATH.SRD ../../bl31
+Y.SPATH.SRD ../../plat/mt6797
+Y.SPATH.SRD ../../services/spd/tspd
+Y.SPATH.SRD ../../services/std_svc/psci
+Y.SPATH.SRD ../../lib/aarch64
+
+Break.Select Program OnChip
+Break.Select Hll OnChip
+Break.Select Spot OnChip
+Break.Select Read OnChip
+Break.Select Write OnChip
+
+;set break point
+;b.s 0x43001000
+;b.s 0x205922
+;b.s enable_mmu_el3
+;b.s bl31_main
+;b.s el3_exit
+;b.s 0x4000c000
+;b.s 0x00111000
+;b.s 0x41E00000
+;b.s sip_smc_handler
+;b.s bl31_prepare_k64_entry
+;b.s bl31_plat_get_next_kernel_ep_info
+
+R.S T 0
+;winclear
+    ; bootarg
+    D.S SD:0x4007f288 %LE %LONG 0x504c504c  ;maggic_number
+    D.S SD:0x4007f28c %LE %LONG 0x00000000  ;boot_mode
+    D.S SD:0x4007f290 %LE %LONG 0x00000000  ;e_flag
+    D.S SD:0x4007f294 %LE %LONG 0x11003000  ;log_port
+    D.S SD:0x4007f298 %LE %LONG 0x000e1000  ;log_baudrate
+    D.S SD:0x4007f29c %LE %LONG 0xffff0201  ;reserved[2], part_num, log_enable
+    D.S SD:0x4007f2a0 %LE %LONG 0x00000002  ;dram_rank_num
+    D.S SD:0x4007f2a4 %LE %LONG 0x10000000  ;dram_rank_size[0]
+    D.S SD:0x4007f2a8 %LE %LONG 0x10000000  ;dram_rank_size[1]
+    D.S SD:0x4007f2ac %LE %LONG 0xdfffffff  ;dram_rank_size[2]
+    D.S SD:0x4007f2b0 %LE %LONG 0xfffffdff  ;dram_rank_size[3]
+    D.S SD:0x4007f2b4 %LE %LONG 0xffffffff  
+    D.S SD:0x4007f2b8 %LE %LONG 0x00000002  ;mblock_num
+    D.S SD:0x4007f2bc %LE %LONG 0x00000000  
+    D.S SD:0x4007f2c0 %LE %LONG 0x40000000  ;mblock[0].start
+    D.S SD:0x4007f2c4 %LE %LONG 0x00000000  
+    D.S SD:0x4007f2c8 %LE %LONG 0x10000000  ;mblock[0].size
+    D.S SD:0x4007f2cc %LE %LONG 0x00000000  
+    D.S SD:0x4007f2d0 %LE %LONG 0x00000000  ;mblock[0].rank
+    D.S SD:0x4007f2d4 %LE %LONG 0x00000000  
+    D.S SD:0x4007f2d8 %LE %LONG 0x50000000  ;mblock[1].start
+    D.S SD:0x4007f2dc %LE %LONG 0x00000000  
+    D.S SD:0x4007f2e0 %LE %LONG 0x0fe00000  ;mblock[1].size
+    D.S SD:0x4007f2e4 %LE %LONG 0x00000000
+    D.S SD:0x4007f2e8 %LE %LONG 0x00000001  ;mblock[1].rank
+    D.S SD:0x4007f2ec %LE %LONG 0x00000000
+    D.S SD:0x4007f2f0 %LE %LONG 0x00000000  ;mblock[2].start
+    D.S SD:0x4007f2f4 %LE %LONG 0x00000000
+    D.S SD:0x4007f2f8 %LE %LONG 0x00000000  ;mblock[2].size
+    D.S SD:0x4007f2fc %LE %LONG 0x00000000
+    D.S SD:0x4007f300 %LE %LONG 0x00000000  ;mblock[2].rank
+    D.S SD:0x4007f304 %LE %LONG 0x00000000
+    D.S SD:0x4007f308 %LE %LONG 0x00000000  ;mblock[3].start
+    D.S SD:0x4007f30c %LE %LONG 0x00000000
+    D.S SD:0x4007f310 %LE %LONG 0x00000000  ;mblock[3].size
+    D.S SD:0x4007f314 %LE %LONG 0x00000000
+    D.S SD:0x4007f318 %LE %LONG 0x00000000  ;mblock[3].rank
+    D.S SD:0x4007f31c %LE %LONG 0x00000000
+    D.S SD:0x4007f320 %LE %LONG 0x00000002  ;orig_dram_info.rank_num
+    D.S SD:0x4007f324 %LE %LONG 0xffffffff
+    D.S SD:0x4007f328 %LE %LONG 0x40000000  ;rank_info[0].start
+    D.S SD:0x4007f32c %LE %LONG 0x00000000
+    D.S SD:0x4007f330 %LE %LONG 0x10000000  ;rank_info[0].size
+    D.S SD:0x4007f334 %LE %LONG 0x00000000
+    D.S SD:0x4007f338 %LE %LONG 0x50000000  ;rank_info[1].start
+    D.S SD:0x4007f33c %LE %LONG 0x00000000
+    D.S SD:0x4007f340 %LE %LONG 0x10000000  ;rank_info[1].size
+    D.S SD:0x4007f344 %LE %LONG 0x00000000
+    D.S SD:0x4007f348 %LE %LONG 0xffffffff  ;rank_info[2].start
+    D.S SD:0x4007f34c %LE %LONG 0xffffffff
+    D.S SD:0x4007f350 %LE %LONG 0xfffeffff  ;rank_info[2].size
+    D.S SD:0x4007f354 %LE %LONG 0xfffffffd
+    D.S SD:0x4007f358 %LE %LONG 0xffffffff  ;rank_info[3].start
+    D.S SD:0x4007f35c %LE %LONG 0xffffffff
+    D.S SD:0x4007f360 %LE %LONG 0xffffffff  ;rank_info[3].size
+    D.S SD:0x4007f364 %LE %LONG 0xffffffff
+    D.S SD:0x4007f368 %LE %LONG 0x00000000  ;lca_reserved_mem.start
+    D.S SD:0x4007f36c %LE %LONG 0x00000000
+    D.S SD:0x4007f370 %LE %LONG 0x00000000  ;lca_reserved_mem.size
+    D.S SD:0x4007f374 %LE %LONG 0x00000000
+    D.S SD:0x4007f378 %LE %LONG 0x5fe00000  ;tee_reserved_mem.start
+    D.S SD:0x4007f37c %LE %LONG 0x00000000
+    D.S SD:0x4007f380 %LE %LONG 0x00200000  ;tee_reserved_mem.size
+    D.S SD:0x4007f384 %LE %LONG 0x00000000
+    D.S SD:0x4007f388 %LE %LONG 0x00000000  ;boot_reason
+    D.S SD:0x4007f38c %LE %LONG 0x00000000  ;meta_com_type
+    D.S SD:0x4007f390 %LE %LONG 0x00000000  ;meta_com_id
+    D.S SD:0x4007f394 %LE %LONG 0x00000000  ;boot_time
+    D.S SD:0x4007f398 %LE %LONG 0xffffffff  ;da_info.addr
+    D.S SD:0x4007f39c %LE %LONG 0xffffffff  ;da_info.arg1
+    D.S SD:0x4007f3a0 %LE %LONG 0xffffdfff  ;da_info.arg2
+    D.S SD:0x4007f3a4 %LE %LONG 0xdfffffff  ;da_info.len
+    D.S SD:0x4007f3a8 %LE %LONG 0xffffffef  ;da_info.sig_len
+    D.S SD:0x4007f3ac %LE %LONG 0xffffffff  ;sec_limit.magic_num
+    D.S SD:0x4007f3b0 %LE %LONG 0xffffdfff  ;sec_limit.forbid_mode
+    D.S SD:0x4007f3b4 %LE %LONG 0x40079a84  ;part_info pointer
+    D.S SD:0x4007f3b8 %LE %LONG 0xfffffffd  ;md_type
+    D.S SD:0x4007f3bc %LE %LONG 0x00000000  ;ddr_reserve_enable
+    D.S SD:0x4007f3c0 %LE %LONG 0x00000000  ;ddr_reserve_success
+    D.S SD:0x4007f3c4 %LE %LONG 0x00199880  ;dram_buf_size
+    D.S SD:0x4007f3c8 %LE %LONG 0x11003000  ;meta_uart_port
+    D.S SD:0x4007f3cc %LE %LONG 0x00000000  ;smc_boot_opt
+    D.S SD:0x4007f3d0 %LE %LONG 0x00000003  ;lk_boot_opt
+    D.S SD:0x4007f3d4 %LE %LONG 0x00000000  ;kernel_boot_opt
+    D.S SD:0x4007f3d8 %LE %LONG 0x0012c000  ;non_secure_sram_addr
+    D.S SD:0x4007f3dc %LE %LONG 0x00004000  ;non_secure_sram_size
+d.l
+enddo

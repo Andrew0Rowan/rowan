@@ -1,0 +1,1 @@
+the default zlib library(libz.so) and ALSA library(libasound.so) copy to this folder in case of platform not include these library lead to build fail

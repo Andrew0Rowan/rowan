@@ -1,0 +1,1 @@
+the platform ALSA library(libasound.so) should copy to this folder.

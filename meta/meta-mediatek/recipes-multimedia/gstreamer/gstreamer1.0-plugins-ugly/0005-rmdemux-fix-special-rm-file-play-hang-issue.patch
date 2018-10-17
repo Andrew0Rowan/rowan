@@ -1,0 +1,163 @@
+From c9fb2f55e91748da9cefb2013a9592cae952b0d4 Mon Sep 17 00:00:00 2001
+From: Xiaolei Gao <xiaolei.gao@mediatek.com>
+Date: Mon, 14 Nov 2016 19:10:34 +0800
+Subject: [PATCH] rmdemux: fix special rm file play hang issue
+
+fix special rm file play hang issue
+Test: run on 2701
+
+Signed-off-by: Xiaolei Gao <xiaolei.gao@mediatek.com>
+CR-Id: AUTO00001768
+---
+ gst/realmedia/rmdemux.c | 81 +++++++++++++++++++++++++++++++++++++++++++++++--
+ gst/realmedia/rmdemux.h |  7 +++++
+ 2 files changed, 86 insertions(+), 2 deletions(-)
+
+diff --git a/gst/realmedia/rmdemux.c b/gst/realmedia/rmdemux.c
+index e5a69cc..6e0b856 100644
+--- a/gst/realmedia/rmdemux.c
++++ b/gst/realmedia/rmdemux.c
+@@ -273,7 +273,12 @@ gst_rmdemux_init (GstRMDemux * rmdemux)
+   rmdemux->have_group_id = FALSE;
+   rmdemux->group_id = G_MAXUINT;
+   rmdemux->flowcombiner = gst_flow_combiner_new ();
+-
++  rmdemux->audio_indx = FALSE;
++  rmdemux->video_indx = FALSE;
++  rmdemux->audio_first_ts = 0;
++  rmdemux->video_first_ts = 0;
++  rmdemux->avsync = FALSE;
++  
+   gst_rm_utils_run_tests ();
+ }
+ 
+@@ -1304,6 +1309,23 @@ gst_rmdemux_get_stream_by_id (GstRMDemux * rmdemux, int id)
+   return NULL;
+ }
+ 
++static GstRMDemuxStream *
++gst_rmdemux_get_stream_by_subtype(GstRMDemux * rmdemux, guint32 subtype)
++{
++  GSList *cur;
++
++  for (cur = rmdemux->streams; cur; cur = cur->next) {
++    GstRMDemuxStream *stream = cur->data;
++
++    if (stream->subtype == subtype) {
++      return stream;
++    }
++  }
++
++  return NULL;
++}
++
++
+ static void
+ gst_rmdemux_send_event (GstRMDemux * rmdemux, GstEvent * event)
+ {
+@@ -1915,6 +1937,13 @@ gst_rmdemux_parse_indx (GstRMDemux * rmdemux, const guint8 * data, int length)
+   /* Point to the next index_stream */
+   rmdemux->index_stream = gst_rmdemux_get_stream_by_id (rmdemux, id);
+ 
++  if (rmdemux->index_stream != NULL) {
++    if (rmdemux->index_stream->subtype == GST_RMDEMUX_STREAM_AUDIO)
++      rmdemux->audio_indx = TRUE;
++    else if (rmdemux->index_stream->subtype == GST_RMDEMUX_STREAM_VIDEO)
++      rmdemux->video_indx = TRUE;
++  }
++  
+   /* Return the length of the index */
+   return 14 * n;
+ }
+@@ -2587,6 +2616,10 @@ gst_rmdemux_parse_packet (GstRMDemux * rmdemux, GstBuffer * in, guint16 version)
+   guint8 flags;
+   guint32 ts;
+ 
++  //init ret,cret
++  cret = GST_FLOW_OK;
++  ret = GST_FLOW_OK;
++  
+   gst_buffer_map (in, &map, GST_MAP_READ);
+   data = map.data;
+   size = map.size;
+@@ -2669,14 +2702,58 @@ gst_rmdemux_parse_packet (GstRMDemux * rmdemux, GstBuffer * in, guint16 version)
+   }
+ 
+   /* do special headers */
++  if ((rmdemux->audio_indx == TRUE) && (rmdemux->video_indx == TRUE)) {
++    GstRMDemuxStream *videostream;
++    GstRMDemuxStream *audiostream;
++    guint32 diff = 0;
++    videostream = gst_rmdemux_get_stream_by_subtype(rmdemux, GST_RMDEMUX_STREAM_VIDEO);
++    audiostream = gst_rmdemux_get_stream_by_subtype(rmdemux, GST_RMDEMUX_STREAM_AUDIO);
++    rmdemux->video_first_ts = GST_TIME_AS_MSECONDS (videostream->index[0].timestamp);
++    rmdemux->audio_first_ts = GST_TIME_AS_MSECONDS (audiostream->index[0].timestamp);
++    if (rmdemux->video_first_ts > rmdemux->audio_first_ts) {
++      diff = rmdemux->video_first_ts - rmdemux->audio_first_ts;
++    }
++    else if (rmdemux->video_first_ts < rmdemux->audio_first_ts) {
++      diff = rmdemux->audio_first_ts - rmdemux->video_first_ts;
++    }
++    if (diff > 1500) {
++      rmdemux->avsync = TRUE;
++    }
++    rmdemux->audio_indx = FALSE;
++    rmdemux->video_indx = FALSE;
++    GST_INFO_OBJECT (rmdemux, "diff=%d,video_first_ts=%d,audio_first_ts=%d",diff,rmdemux->video_first_ts,rmdemux->audio_first_ts); //xiaolei
++  }
++  
+   if (stream->subtype == GST_RMDEMUX_STREAM_VIDEO) {
++    guint32 video_ts;
++    video_ts = GST_TIME_AS_MSECONDS (timestamp);
++    GST_INFO_OBJECT (rmdemux, "video_first_ts=%d,video_ts=%d",rmdemux->video_first_ts,video_ts); 
++    if ((rmdemux->avsync == TRUE) && (rmdemux->video_first_ts <= video_ts)) {
++      video_ts -= rmdemux->video_first_ts;
++      timestamp = video_ts * GST_MSECOND;
++      GST_INFO_OBJECT (rmdemux, "video timestamp=%" GST_TIME_FORMAT, GST_TIME_ARGS (timestamp)); //xiaolei
++    }
+     ret =
+         gst_rmdemux_parse_video_packet (rmdemux, stream, in, offset,
+         version, timestamp, key);
+   } else if (stream->subtype == GST_RMDEMUX_STREAM_AUDIO) {
+-    ret =
++    guint32 audio_ts;
++    audio_ts = GST_TIME_AS_MSECONDS (timestamp);
++    GST_INFO_OBJECT (rmdemux, "video_first_ts=%d,audio_ts=%d",rmdemux->video_first_ts,audio_ts); 
++    if (rmdemux->avsync == FALSE) {
++      ret =
++        gst_rmdemux_parse_audio_packet (rmdemux, stream, in, offset,
++        version, timestamp, key);
++    }
++    else if ((rmdemux->avsync == TRUE) && (rmdemux->video_first_ts <= audio_ts)) {
++      GST_INFO_OBJECT (rmdemux, "video_first_ts <= audio_ts");
++      audio_ts -= rmdemux->video_first_ts;
++      timestamp = audio_ts * GST_MSECOND;
++      GST_INFO_OBJECT (rmdemux, "audio timestamp=%" GST_TIME_FORMAT, GST_TIME_ARGS (timestamp)); //xiaolei
++      ret =
+         gst_rmdemux_parse_audio_packet (rmdemux, stream, in, offset,
+         version, timestamp, key);
++    }
+   } else {
+     gst_buffer_unref (in);
+     ret = GST_FLOW_OK;
+diff --git a/gst/realmedia/rmdemux.h b/gst/realmedia/rmdemux.h
+index 68a1700..eb0c588 100644
+--- a/gst/realmedia/rmdemux.h
++++ b/gst/realmedia/rmdemux.h
+@@ -104,6 +104,13 @@ struct _GstRMDemux {
+   guint offset;
+   gboolean seekable;
+ 
++  gboolean audio_indx;
++  gboolean video_indx;
++  gboolean avsync;
++  guint32 video_first_ts;
++  guint32 audio_first_ts;
++  
++  
+   GstRMDemuxState state;
+   GstRMDemuxLoopState loop_state;
+   GstRMDemuxStream *index_stream;
+-- 
+1.9.1
+

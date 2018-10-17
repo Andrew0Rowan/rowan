@@ -1,0 +1,89 @@
+diff --git a/src/conf/alsa.conf b/src/conf/alsa.conf
+index f22918f..ce1aa85 100644
+--- a/src/conf/alsa.conf
++++ b/src/conf/alsa.conf
+@@ -632,3 +632,84 @@ timer.hw {
+ 		device $DEV
+ 	}
+ }
++pcm.prififo {
++    type mtkfile
++    file /tmp/prififo
++    format stream
++}
++
++pcm.pri {
++    type plug
++    slave {
++        pcm prififo
++        format S32_LE
++    }
++}
++
++pcm.imm0fifo {
++    type mtkfile
++    file /tmp/imm0fifo
++    format stream
++}
++
++pcm.imm0 {
++    type plug
++    slave {
++        pcm imm0fifo
++        format S32_LE
++    }
++}
++
++pcm.imm1fifo {
++    type mtkfile
++    file /tmp/imm1fifo
++    format stream
++}
++
++pcm.imm1 {
++    type plug
++    slave {
++        pcm imm1fifo
++        format S32_LE
++    }
++}
++
++
++pcm.mainfifo {
++    type mtkac
++    stream_id 0
++}
++
++pcm.main {
++    type plug
++    slave {
++        pcm mainfifo
++        format S32_LE
++    }
++}
++
++pcm.sub0fifo {
++    type mtkac
++    stream_id 1
++}
++
++pcm.sub0 {
++    type plug
++    slave {
++        pcm sub0fifo
++        format S32_LE
++    }
++}
++
++pcm.sub1fifo {
++    type mtkac
++    stream_id 2
++}
++
++pcm.sub1 {
++    type plug
++    slave {
++        pcm sub1fifo
++        format S32_LE
++    }
++}

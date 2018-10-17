@@ -1,0 +1,2669 @@
+From 7fcb2ea0d4b7d870852cb750723cebaf1b7d0626 Mon Sep 17 00:00:00 2001
+From: Nelson Liu <nelson.liu@mediatek.com>
+Date: Fri, 30 Sep 2016 10:37:31 +0800
+Subject: [PATCH 1/4] mdp-renderer: weston support mdp for overlay plane
+
+REBASED
+1. export MDP_DEBUG=1 to enable mdp-renderer log
+   export MDP_DUMP=1 to enable dump mdp out buffer
+2. revise simple-egl buffer size 256x256 for test
+Test: test ok
+
+Change-Id: I7856beeeda5b1a4462b42e538229b1828823c37f
+Signed-off-by: Nelson Liu <nelson.liu@mediatek.com>
+CR-Id: AUTO00000252
+---
+ Makefile.am             |   16 +-
+ clients/simple-egl.c    |    7 +-
+ src/compositor-drm.c    |  713 ++++++++++++++++--------
+ src/compositor.c        |    1 +
+ src/compositor.h        |    5 +
+ src/mdp-drm-share-mtk.h |  143 +++++
+ src/mdp-renderer-mtk.c  | 1385 +++++++++++++++++++++++++++++++++++++++++++++++
+ 7 files changed, 2030 insertions(+), 240 deletions(-)
+ create mode 100644 src/mdp-drm-share-mtk.h
+ create mode 100644 src/mdp-renderer-mtk.c
+
+diff --git a/Makefile.am b/Makefile.am
+index 92e0608..d9cf059 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -310,7 +310,21 @@ drm_backend_la_SOURCES =			\
+ 	src/libbacklight.c			\
+ 	src/libbacklight.h			\
+ 	src/weston-configure-mtk.c		\
+-	src/weston-configure-mtk.h
++	src/weston-configure-mtk.h	\
++	src/mdp-drm-share-mtk.h
++
++module_LTLIBRARIES += mdp-renderer-mtk.la
++mdp_renderer_mtk_la_LDFLAGS = -module -avoid-version
++mdp_renderer_mtk_la_LIBADD =				\
++	$(COMPOSITOR_LIBS)			\
++	$(DRM_COMPOSITOR_LIBS)
++mdp_renderer_mtk_la_CFLAGS =				\
++	$(COMPOSITOR_CFLAGS)			\
++	$(DRM_COMPOSITOR_CFLAGS)		\
++	$(AM_CFLAGS)
++mdp_renderer_mtk_la_SOURCES =			\
++	src/mdp-renderer-mtk.c			\
++	src/mdp-drm-share-mtk.h
+ 
+ if ENABLE_VAAPI_RECORDER
+ drm_backend_la_SOURCES += src/vaapi-recorder.c src/vaapi-recorder.h
+diff --git a/clients/simple-egl.c b/clients/simple-egl.c
+index 6068530..06bbf07 100644
+--- a/clients/simple-egl.c
++++ b/clients/simple-egl.c
+@@ -334,7 +334,7 @@ handle_ivi_surface_configure(void *data, struct ivi_surface *ivi_surface,
+                              int32_t width, int32_t height)
+ {
+ 	struct window *window = data;
+-
++/*
+ 	wl_egl_window_resize(window->native, width, height, 0, 0);
+ 
+ 	window->geometry.width = width;
+@@ -342,6 +342,7 @@ handle_ivi_surface_configure(void *data, struct ivi_surface *ivi_surface,
+ 
+ 	if (!window->fullscreen)
+ 		window->window_size = window->geometry;
++*/
+ }
+ 
+ static const struct ivi_surface_listener ivi_surface_listener = {
+@@ -843,8 +844,8 @@ main(int argc, char **argv)
+ 
+ 	window.display = &display;
+ 	display.window = &window;
+-	window.geometry.width  = 250;
+-	window.geometry.height = 250;
++	window.geometry.width  = 256;
++	window.geometry.height = 256;
+ 	window.window_size = window.geometry;
+ 	window.buffer_size = 32;
+ 	window.frame_sync = 1;
+diff --git a/src/compositor-drm.c b/src/compositor-drm.c
+index 41fdeba..7104a42 100644
+--- a/src/compositor-drm.c
++++ b/src/compositor-drm.c
+@@ -59,6 +59,7 @@
+ #include "presentation-time-server-protocol.h"
+ #include "linux-dmabuf.h"
+ #include "weston-configure-mtk.h"
++#include "mdp-drm-share-mtk.h"
+ 
+ #define ATOMIC_DEBUG getenv("ATOMIC_DEBUG")
+ 
+@@ -79,6 +80,15 @@
+ #endif
+ 
+ /**
++ * Possible values for the WDRM_PLANE_TYPE property.
++ */
++enum wdrm_buffer_type {
++	WDRM_BUFFER_TYPE_SHM = 0,
++	WDRM_BUFFER_TYPE_EGL,
++	WDRM_BUFFER_TYPE_DMA
++};
++
++/**
+  * List of properties attached to DRM planes
+  */
+ enum wdrm_plane_property {
+@@ -93,7 +103,6 @@ enum wdrm_plane_property {
+ 	WDRM_PLANE_CRTC_H,
+ 	WDRM_PLANE_FB_ID,
+ 	WDRM_PLANE_CRTC_ID,
+-	WDRM_PLANE_ROTATE,
+ 	WDRM_PLANE_ALPHA,
+ 	WDRM_PLANE_COLORKEY,
+ 	WDRM_PLANE_ZPOS,
+@@ -225,6 +234,8 @@ struct drm_backend {
+ 			    const char *name,
+ 			    struct weston_drm_backend_output_config *output_config);
+ 	bool use_current_mode;
++
++	void *mdp_ctx;
+ };
+ 
+ struct drm_mode {
+@@ -237,6 +248,7 @@ struct drm_fb {
+ 	uint32_t fb_id, size;
+ 	int fd;
+ 	int is_client_buffer;
++	int is_mdp_buffer;
+ 	struct weston_buffer_reference buffer_ref;
+ 
+ 	/* Used by gbm fbs */
+@@ -282,6 +294,9 @@ enum plane_property {
+ struct drm_plane {
+ 	struct wl_list link;
+ 
++	/* the flag state the plane not commit drm to check */
++	int32_t avoid_check;
++
+ 	struct weston_plane plane;
+ 
+ 	enum wdrm_plane_type type;
+@@ -361,9 +376,54 @@ struct drm_output {
+ 	struct wl_list plane_flip_list; /* drm_plane::flip_link */
+ };
+ 
++struct drm_fourcc_info {
++	unsigned int drm_format;
++	int plane_cnt;
++	int bpp;
++};
++
++static struct drm_fourcc_info fourcc_tbl[] = {
++	{DRM_FORMAT_RGB565, 1, 16},
++	{DRM_FORMAT_RGBA5551, 1, 16},
++	{DRM_FORMAT_RGBA4444, 1, 16},
++	{DRM_FORMAT_XRGB8888, 1, 32},
++	{DRM_FORMAT_XBGR8888, 1, 32},
++	{DRM_FORMAT_RGBX8888, 1, 32},
++	{DRM_FORMAT_BGRX8888, 1, 32},
++	{DRM_FORMAT_ARGB8888, 1, 32},
++	{DRM_FORMAT_ABGR8888, 1, 32},
++	{DRM_FORMAT_RGBA8888, 1, 32},
++	{DRM_FORMAT_BGRA8888, 1, 32},
++	{DRM_FORMAT_YUYV, 1, 16},
++	{DRM_FORMAT_VYUY, 1, 16},
++	{DRM_FORMAT_NV12, 2, 12},
++	{DRM_FORMAT_NV21, 2, 12},
++	{DRM_FORMAT_NV16, 2, 16},
++	{DRM_FORMAT_NV61, 2, 16},
++	{DRM_FORMAT_YUV420, 3, 12},
++	{DRM_FORMAT_YVU420, 3, 12},
++	{0, 0, 0},
++};
++
+ static struct gl_renderer_interface *gl_renderer;
+ 
+ static const char default_seat[] = "seat0";
++
++static struct drm_fourcc_info *
++get_drm_format_info(unsigned int format)
++{
++	int i;
++
++	for (i = 0; ; i++) {
++		if ( format == fourcc_tbl[i].drm_format ){
++			return &fourcc_tbl[i];
++		}
++		if ( fourcc_tbl[i].drm_format == 0 )
++			break;
++	}
++	return NULL;
++}
++
+ /**
+  * Return a string describing the type of a DRM object
+  */
+@@ -608,7 +668,6 @@ plane_properties_init(struct drm_plane *plane)
+ 		[WDRM_PLANE_CRTC_H] = "CRTC_H",
+ 		[WDRM_PLANE_FB_ID] = "FB_ID",
+ 		[WDRM_PLANE_CRTC_ID] = "CRTC_ID",
+-		[WDRM_PLANE_ROTATE] = "rotation",
+ 		[WDRM_PLANE_ALPHA] = "alpha",
+ 		[WDRM_PLANE_COLORKEY] = "colorkey",
+ 		[WDRM_PLANE_ZPOS] = "zpos",
+@@ -1085,10 +1144,12 @@ drm_fb_destroy_dumb(struct drm_fb *fb)
+ 
+ static struct drm_fb *
+ drm_fb_get_from_dma_buf(struct drm_backend *backend,
+-								struct linux_dmabuf_buffer *dmabuf)
++                                struct linux_dmabuf_buffer *dmabuf,
++                                uint32_t format)
+ {
++	struct drm_fourcc_info *format_info;
+ 	struct drm_fb *fb ;
+-	uint32_t width, height, format;
++	uint32_t width, height;
+ 	uint32_t handles[4];
+ 	int ret, i;
+ 
+@@ -1098,8 +1159,9 @@ drm_fb_get_from_dma_buf(struct drm_backend *backend,
+ 
+ 	width = dmabuf->attributes.width;
+ 	height = dmabuf->attributes.height;
+-	format = dmabuf->attributes.format;
+ 	fb->fd = backend->drm.fd;
++	format_info = get_drm_format_info(format);
++	fb->size = format_info->bpp * width * height / 8;
+ 
+ 	if (backend->min_width > width || width > backend->max_width ||
+ 	    backend->min_height > height ||
+@@ -1128,7 +1190,7 @@ drm_fb_get_from_dma_buf(struct drm_backend *backend,
+ 	ret = drmModeAddFB2(backend->drm.fd, width, height,
+ 			    format, handles, fb->strides, fb->offsets,
+ 			    &fb->fb_id, 0);
+-	weston_log("drmModeAddFB2 fb_id: %d\n", fb->fb_id);
++
+ 	if (ret) {
+ 		for (i = 0; i< dmabuf->attributes.n_planes; i++) {
+ 			struct drm_gem_close gem_close = {
+@@ -1156,6 +1218,7 @@ drm_fb_get_from_bo(struct gbm_bo *bo,
+ 		   struct drm_backend *backend, uint32_t format)
+ {
+ 	struct drm_fb *fb = gbm_bo_get_user_data(bo);
++	struct drm_fourcc_info *format_info;
+ 	uint32_t width, height;
+ 	uint32_t handles[4];
+ 	int ret;
+@@ -1176,7 +1239,8 @@ drm_fb_get_from_bo(struct gbm_bo *bo,
+ 
+ 	fb->fd = backend->drm.fd;
+ 	fb->handles[0] = 0;
+-	fb->size = 0;
++	format_info = get_drm_format_info(format);
++	fb->size = format_info->bpp * width * height / 8;
+ 
+ 	if (backend->min_width > width || width > backend->max_width ||
+ 	    backend->min_height > height ||
+@@ -1235,6 +1299,18 @@ drm_output_release_fb(struct drm_output *output, struct drm_fb *fb)
+ 	if (!fb)
+ 		return;
+ 
++	if (fb->is_mdp_buffer) //mdp output buffer
++	{
++		if (fb->fb_id)
++			drmModeRmFB(fb->fd, fb->fb_id);
++
++		weston_buffer_reference(&fb->buffer_ref, NULL);
++
++		free(fb);
++
++		return;
++	}
++
+ 	if (fb->map &&
+             (fb != output->dumb[0] && fb != output->dumb[1])) {
+ 		drm_fb_destroy_dumb(fb);
+@@ -1252,46 +1328,6 @@ drm_output_release_fb(struct drm_output *output, struct drm_fb *fb)
+ 		gbm_surface_release_buffer(output->gbm_surface, fb->bo);
+ }
+ 
+-static int32_t
+-drm_check_capacity_for_mdp(struct drm_plane *s, uint32_t format)
+-{
+-	switch (format) {
+-	case DRM_FORMAT_ARGB4444:
+-	case DRM_FORMAT_ABGR4444:
+-	case DRM_FORMAT_RGBA4444:
+-	case DRM_FORMAT_BGRA4444:
+-
+-	case DRM_FORMAT_ARGB1555:
+-	case DRM_FORMAT_ABGR1555:
+-	case DRM_FORMAT_RGBA5551:
+-	case DRM_FORMAT_BGRA5551:
+-		return -1;
+-
+-	case DRM_FORMAT_ARGB8888:
+-		/*the only ARGB format supported by drm is ARGB8888*/
+-		if (s->rotation != BIT(0) ||
+-			((s->src_h >> 16) != s->dest_h) ||
+-			((s->src_w >> 16) != s->dest_w) )
+-			return -1;
+-		else
+-			return 0;
+-	case DRM_FORMAT_ABGR8888:
+-	case DRM_FORMAT_RGBA8888:
+-	case DRM_FORMAT_BGRA8888:
+-
+-	case DRM_FORMAT_ARGB2101010:
+-	case DRM_FORMAT_ABGR2101010:
+-	case DRM_FORMAT_RGBA1010102:
+-	case DRM_FORMAT_BGRA1010102:
+-
+-	case DRM_FORMAT_AYUV:
+-		return -1;
+-	default:
+-		return 0;
+-	}
+-
+-}
+-
+ static uint32_t
+ drm_output_check_scanout_format(struct drm_output *output,
+ 				struct weston_surface *es, struct gbm_bo *bo)
+@@ -1729,7 +1765,6 @@ drm_output_populate_atomic_plane(struct drm_output *output, struct drm_plane *p,
+ 	ret |= atomic_plane_add(req, p, WDRM_PLANE_CRTC_Y, p->dest_y);
+ 	ret |= atomic_plane_add(req, p, WDRM_PLANE_CRTC_W, p->dest_w);
+ 	ret |= atomic_plane_add(req, p, WDRM_PLANE_CRTC_H, p->dest_h);
+-	atomic_plane_add(req, p, WDRM_PLANE_ROTATE, p->rotation);
+ 
+ 	dirty = p->plane_config.dirty;
+ 	while (p->plane_config.dirty != PLANE_NO_CHANGED) {
+@@ -1777,13 +1812,18 @@ drm_output_populate_atomic_plane(struct drm_output *output, struct drm_plane *p,
+ }
+ 
+ static int
++drm_send_sprite_to_share(struct drm_output *dout);
++
++static int
+ drm_output_repaint_atomic(struct weston_output *output_base,
+ 			  pixman_region32_t *damage)
+ {
+ 	struct drm_output *output = (struct drm_output *) output_base;
+ 	struct drm_backend *backend =
+ 		(struct drm_backend *)output->base.compositor->backend;
++	struct weston_compositor *ec = output->base.compositor;
+ 	struct drm_plane *plane, *plane_tmp;
++	struct mdp_drm_share *pmds = NULL;
+ 	drmModeAtomicReq *req;
+ 	uint32_t flags;
+ 	bool any_submitted = false;
+@@ -1799,6 +1839,12 @@ drm_output_repaint_atomic(struct weston_output *output_base,
+ 	assert(output->dpms == WESTON_DPMS_ON ||
+ 	       !output->primary_plane->current);
+ 
++	// MDP OPEARATION
++	if (ec->pmds) {
++		pmds = (struct mdp_drm_share *)ec->pmds;
++		drm_send_sprite_to_share(output);
++	}
++
+ 	if (!output->primary_plane->next)
+ 		drm_output_render(output, damage);
+ 
+@@ -1807,6 +1853,14 @@ drm_output_repaint_atomic(struct weston_output *output_base,
+ 		return -1;
+ 	}
+ 
++	if (pmds) {
++		while (pmds->mdp_needed){
++			pthread_mutex_lock(&pmds->mdp_mutex);
++			pthread_cond_wait(&pmds->mdp_cond, &pmds->mdp_mutex);
++			pthread_mutex_unlock(&pmds->mdp_mutex);
++		}
++	}
++
+ 	/* If there is no current framebuffer, then we need to do a modeset. */
+ 	if ((!output->primary_plane->current) ||
+ 			(output->ddp_crtc.dirty != CRTC_NO_CHANGED)) {
+@@ -2146,6 +2200,7 @@ page_flip_handler(int fd, unsigned int frame,
+ 
+ 		plane->current = plane->next;
+ 		plane->next = NULL;
++		plane->avoid_check = 0;
+ 
+ 		/*if the frame is not last, then remove plane destroy function and recycle plane*/
+ 		if ((plane != output->primary_plane) &&
+@@ -2188,13 +2243,9 @@ page_flip_handler(int fd, unsigned int frame,
+ 			weston_output_schedule_repaint(&output->base);
+ 	}
+ }
+-
+ static uint32_t
+-drm_output_check_sprite_format(struct drm_plane *s,
+-			       struct weston_view *ev, uint32_t format)
++weston_check_sprite_format(struct weston_view *ev, uint32_t format)
+ {
+-	uint32_t i;
+-
+ 	if (format == GBM_FORMAT_ARGB8888) {
+ 		pixman_region32_t r;
+ 
+@@ -2209,6 +2260,17 @@ drm_output_check_sprite_format(struct drm_plane *s,
+ 		pixman_region32_fini(&r);
+ 	}
+ 
++	return format;
++}
++
++static uint32_t
++drm_output_check_sprite_format(struct drm_plane *s,
++			       struct weston_view *ev, uint32_t format)
++{
++	uint32_t i;
++
++	format = weston_check_sprite_format(ev, format);
++
+ 	for (i = 0; i < s->count_formats; i++)
+ 		if (s->formats[i] == format)
+ 			return format;
+@@ -2223,126 +2285,45 @@ drm_view_transform_supported(struct weston_view *ev)
+ 		(ev->transform.matrix.type < WESTON_MATRIX_TRANSFORM_ROTATE);
+ }
+ 
+-/*
+- * according transform of output, adjust view's transform automatically.
+- * @param mmap_transform: transform to be set to drm
+- * @param out_transform: output's transform
+- * @param ev_transform: view's transform
+-*/
+-static void
+-drm_map_view_transform_to_output(uint32_t *mmap_transform,
+-				uint32_t out_transform, uint32_t ev_transform)
++static int drm_format_check(unsigned int format)
+ {
+-	uint32_t base;
+-	int32_t tran, tmp;
+-	uint32_t rotate_360 = WL_OUTPUT_TRANSFORM_270 + 1;
+-	uint32_t flip_360 = WL_OUTPUT_TRANSFORM_FLIPPED_270 + 1;
+-
+-	switch(out_transform){
+-		case WL_OUTPUT_TRANSFORM_NORMAL:
+-			base = WL_OUTPUT_TRANSFORM_NORMAL;
+-			break;
+-		case WL_OUTPUT_TRANSFORM_90:
+-			base = WL_OUTPUT_TRANSFORM_270;
+-			break;
+-		case WL_OUTPUT_TRANSFORM_180:
+-			base = WL_OUTPUT_TRANSFORM_180;
+-			break;
+-		case WL_OUTPUT_TRANSFORM_270:
+-			base = WL_OUTPUT_TRANSFORM_90;
+-			break;
+-		case WL_OUTPUT_TRANSFORM_FLIPPED:
+-			base = WL_OUTPUT_TRANSFORM_FLIPPED;
+-			break;
+-		case WL_OUTPUT_TRANSFORM_FLIPPED_90:
+-			base = WL_OUTPUT_TRANSFORM_FLIPPED_270;
+-			break;
+-		case WL_OUTPUT_TRANSFORM_FLIPPED_180:
+-			base = WL_OUTPUT_TRANSFORM_FLIPPED_180;
+-			break;
+-		case WL_OUTPUT_TRANSFORM_FLIPPED_270:
+-			base = WL_OUTPUT_TRANSFORM_FLIPPED_90;
+-			break;
+-		default:
+-			weston_log("drm_map_view_transform_to_output"
+-				"out_transform = %d doesn't support\n",out_transform);
+-			base = WL_OUTPUT_TRANSFORM_NORMAL;
+-			break;
+-	}
+-	/*
+-	 * consider as two parts: rotate 0 ~ 270 and flip 0 ~ 270.
+-	 * according the base calcuted from output_transform to
+-	 * determine relations between primary plane and overlay
+-	 * plane.
+-	*/
+-	if (base < rotate_360) {
+-		base = rotate_360 - base;
+-
+-		if (ev_transform < rotate_360){
+-			tran = ev_transform - base;
+-			if (tran < 0)
+-				tran += rotate_360;
+-			ev_transform = tran;
+-		} else {
+-			ev_transform += base;
+-			if (ev_transform >= flip_360)
+-				ev_transform -= rotate_360;
+-		}
+-	} else {
+-		tmp = rotate_360 - (base & 0b11);
+-		base = (base & 0b100) + tmp;
+-
+-		if (ev_transform >= rotate_360){
+-			tran = ev_transform - base;
+-			if (tran < 0)
+-				tran += rotate_360;
+-			ev_transform = tran;
+-		} else {
+-			ev_transform += base;
+-			if (ev_transform >= flip_360)
+-				ev_transform -= rotate_360;
+-		}
++	switch (format) {
++	case DRM_FORMAT_XRGB8888:
++	case DRM_FORMAT_ARGB8888:
++	case DRM_FORMAT_RGB888:
++	case DRM_FORMAT_RGB565:
++	case DRM_FORMAT_YUYV:
++	case DRM_FORMAT_UYVY:
++		return 0;
++	default:
++		return -1;
+ 	}
+-	*mmap_transform = ev_transform;
+ }
+ 
+-/*
+- * the function is realize the transform of view to match drm driver.
+-*/
+-static uint32_t
+-drm_plane_rotation_get_from_view(uint32_t transform)
++//return 1 stand for need mdp process
++static int
++drm_plane_need_mdp_process(struct drm_plane *s,
++				uint32_t buf_w, uint32_t buf_h, uint32_t format)
+ {
+-	uint32_t rotate, tran;
++	uint32_t crop_x = s->src_x >> 16;
++	uint32_t crop_y = s->src_y >> 16;
++	uint32_t crop_w = s->src_w >> 16;
++	uint32_t crop_h = s->src_h >> 16;
++	//scale check
++	if ((buf_w != s->dest_w) ||(buf_h != s->dest_h))
++		return 1;
++	//crop check
++	if ((crop_x != 0) ||(crop_y != 0) ||
++		(crop_w != buf_w) || (crop_h != buf_w))
++		return 1;
++	//format check
++	if (drm_format_check(format) < 0)
++		return 1;
++	//rotate check
++	if (s->rotation != WL_OUTPUT_TRANSFORM_NORMAL)
++		return 1;
+ 
+-	tran = transform & (0b111);
+-	switch(tran){
+-		case WL_OUTPUT_TRANSFORM_90:
+-			rotate = BIT(1);
+-			break;
+-		case WL_OUTPUT_TRANSFORM_180:
+-			rotate = BIT(2);
+-			break;
+-		case WL_OUTPUT_TRANSFORM_270:
+-			rotate = BIT(3);
+-			break;
+-		case WL_OUTPUT_TRANSFORM_FLIPPED:
+-			rotate = BIT(4);
+-			break;
+-		case WL_OUTPUT_TRANSFORM_FLIPPED_90:
+-			rotate = BIT(4) | BIT(1);
+-			break;
+-		case WL_OUTPUT_TRANSFORM_FLIPPED_180:
+-			rotate = BIT(4) | BIT(2);
+-			break;
+-		case WL_OUTPUT_TRANSFORM_FLIPPED_270:
+-			rotate = BIT(4) | BIT(3);
+-			break;
+-		case WL_OUTPUT_TRANSFORM_NORMAL:
+-		default:
+-			rotate = BIT(0);
+-			break;
+-	}
+-	return rotate;
++	return 0;
+ }
+ 
+ static struct weston_plane *
+@@ -2356,11 +2337,13 @@ drm_output_prepare_overlay_view(struct drm_output *output,
+ 	struct drm_plane *s;
+ 	struct linux_dmabuf_buffer *dmabuf;
+ 	int found = 0;
+-	struct gbm_bo *bo;
++	struct gbm_bo *bo = NULL;
++	int32_t buffer_type = -1;
++	uint32_t format;
+ 	pixman_region32_t dest_rect, src_rect;
+ 	pixman_box32_t *box, tbox;
+-	uint32_t format, tmpTransform;;
+ 	wl_fixed_t sx1, sy1, sx2, sy2;
++	int32_t width, height;
+ 
+ 	/*
+ 	 * if switch controlled by client is off, then return.
+@@ -2374,6 +2357,9 @@ drm_output_prepare_overlay_view(struct drm_output *output,
+ 	if (b->sprites_are_broken)
+ 		return NULL;
+ 
++	if (ev->alpha != 1.0f)
++		return NULL;
++
+ 	if (ev->output_mask != (1u << output->base.id))
+ 		return NULL;
+ 
+@@ -2411,37 +2397,36 @@ drm_output_prepare_overlay_view(struct drm_output *output,
+ 		return NULL;
+ 
+ 	if ((dmabuf = linux_dmabuf_buffer_get(buffer_resource))) {
+-		s->next = drm_fb_get_from_dma_buf(b, dmabuf);
+-
+-		if (!s->next) {
+-			weston_log("failed to get fb from dmabuf\n");
+-			return NULL;
+-		}
+-
+-		format = drm_output_check_sprite_format(s, ev, dmabuf->attributes.format);
++		width = dmabuf->attributes.width;
++		height = dmabuf->attributes.height;
++		format = dmabuf->attributes.format;
++
++		// drm remove mdp, So some formats that mdp support not support again.
++		//So we shall not use formats that drm supported to check again.only switch
++		//argb to xrgb if opaque is full of view
++		 format = weston_check_sprite_format(ev, dmabuf->attributes.format);
+ 		if (format == 0) {
+-			drm_output_release_fb(output, s->next);
+ 			weston_log("failed to support format for dma-buf\n");
+ 			return NULL;
+ 		}
++
++		buffer_type = WDRM_BUFFER_TYPE_DMA;
+ 	} else {
+ 		bo = gbm_bo_import(b->gbm, GBM_BO_IMPORT_WL_BUFFER,
+ 				   buffer_resource, GBM_BO_USE_SCANOUT);
+ 		if (!bo)
+ 			return NULL;
+ 
+-		format = drm_output_check_sprite_format(s, ev, gbm_bo_get_format(bo));
++		format = weston_check_sprite_format(ev, gbm_bo_get_format(bo));
+ 		if (format == 0) {
+ 			gbm_bo_destroy(bo);
+ 			weston_log("failed to support format for bo\n");
+ 			return NULL;
+ 		}
+-		s->next = drm_fb_get_from_bo(bo, b, format);
+-		if (!s->next) {
+-			gbm_bo_destroy(bo);
+-			weston_log("failed to get fb from bo\n");
+-			return NULL;
+-		}
++
++		width = gbm_bo_get_width(bo);
++		height = gbm_bo_get_height(bo);
++		buffer_type = WDRM_BUFFER_TYPE_EGL;
+ 	}
+ 
+ 	box = pixman_region32_extents(&ev->transform.boundingbox);
+@@ -2469,8 +2454,16 @@ drm_output_prepare_overlay_view(struct drm_output *output,
+ 	s->dest_y = tbox.y1;
+ 	s->dest_w = tbox.x2 - tbox.x1;
+ 	s->dest_h = tbox.y2 - tbox.y1;
++
+ 	pixman_region32_fini(&dest_rect);
+ 
++	/* drm check item include min_w/h = 64 and max_w/h = 4096,
++	 * maybe should check ahead, or it will cause addfd fail.
++	*/
++	if ((s->dest_w < b->min_width) || (s->dest_w > b->max_width) ||
++		(s->dest_h < b->min_height) || (s->dest_h > b->max_height))
++		return NULL;
++
+ 	if (viewport->buffer.src_width == wl_fixed_from_int(-1)) {
+ 		pixman_region32_init(&src_rect);
+ 		pixman_region32_intersect(&src_rect, &ev->transform.boundingbox,
+@@ -2513,40 +2506,55 @@ drm_output_prepare_overlay_view(struct drm_output *output,
+ 					   viewport->buffer.transform,
+ 					   viewport->buffer.scale,
+ 					   tbox);
+-
++	//in fact, src_w/h is crop size
+ 	s->src_x = tbox.x1 << 8;
+ 	s->src_y = tbox.y1 << 8;
+ 	s->src_w = (tbox.x2 - tbox.x1) << 8;
+ 	s->src_h = (tbox.y2 - tbox.y1) << 8;
+ 
+-	drm_map_view_transform_to_output(&tmpTransform,
+-					output->base.transform, viewport->buffer.transform);
+-	s->rotation =
+-		drm_plane_rotation_get_from_view(tmpTransform);
+-
+-	if (drm_check_capacity_for_mdp(s, format) != 0) {
+-		/*release framebuffer, but cann't release buffer*/
+-		if (s->next->bo)
+-			gbm_bo_destroy(s->next->bo);
+-		else if (s->next->fb_id) {
+-			drmModeRmFB(gbm_device_get_fd(b->gbm), s->next->fb_id);
+-			free(s->next);
+-		}
+-		s->next = NULL;
++	s->rotation = output->base.transform +
++		   ev->surface->buffer_viewport.buffer.transform;
+ 
+-		/*release drm plane*/
+-		s->output = NULL;
+-		s->view = NULL;
++	if (drm_plane_need_mdp_process(s, width, height, format)) {
++		if (format == DRM_FORMAT_ARGB8888)
++			return NULL;
+ 
+-		weston_log("mdp have no capacity to transform it.\n");
+-		return NULL;
+-	}
++		if (buffer_type == WDRM_BUFFER_TYPE_EGL)
++			gbm_bo_destroy(bo);
+ 
+-	if (s->next != s->current)
+-		drm_fb_set_buffer(s->next, ev->surface->buffer_ref.buffer);
++		if (!ec->pmds)
++			return NULL;
++		//8 byte align to guarantee total size align 64 byte
++		s->dest_w = (s->dest_w + 7) & (~7);
++		s->dest_h = (s->dest_h + 7) & (~7);
++
++		//mdp case no need to commit to drm to check
++		s->avoid_check = 1;
++	} else {
++		if (buffer_type == WDRM_BUFFER_TYPE_DMA) {
++			s->next = drm_fb_get_from_dma_buf(b, dmabuf, format);
++			if (!s->next) {
++				weston_log("failed to get fb from dmabuf\n");
++				return NULL;
++			}
++		} else if (buffer_type == WDRM_BUFFER_TYPE_EGL) {
++			s->next = drm_fb_get_from_bo(bo, b, format);
++			if (!s->next) {
++				gbm_bo_destroy(bo);
++				weston_log("failed to get fb from bo\n");
++				return NULL;
++			}
++		} else {
++			weston_log("warning: %s buffer type may not support\n", __func__);
++			return NULL;
++		}
++
++		if (s->next != s->current)
++			drm_fb_set_buffer(s->next, ev->surface->buffer_ref.buffer);
++	}
+ 
+-	s->output = output;
+ 	s->view = ev;
++	s->output = output;
+ 
+ 	wl_signal_add(&ev->destroy_signal, &s->view_destroy);
+ 
+@@ -2800,33 +2808,34 @@ drm_assign_planes(struct weston_output *output_base)
+ 			struct drm_plane *plane =
+ 				container_of(next_plane, struct drm_plane, plane);
+ 
+-			int saved_cursor = drmModeAtomicGetCursor(req);
+-
+-			/* This is not matched with an update_success, as we
+-			 * never actually commit it, just check that it could
+-			 * potentially be committed at some stage. */
+-			drm_plane_update_begin(plane);
+-			ret = drm_output_populate_atomic_plane(output, plane,
+-								   req, false);
+-			if (ret > 0)
+-				ret = drmModeAtomicCommit(b->drm.fd, req,
+-							  DRM_MODE_ATOMIC_TEST_ONLY,
+-							  output);
+-			if (ret != 0) {
+-				drmModeAtomicSetCursor(req, saved_cursor);
+-				weston_log("	... no luck [kernel].\n");
+-				if (plane->next) {
+-					if (plane != output->cursor_plane)
+-						drm_output_release_fb(output,
+-								  plane->next);
+-					plane->next = NULL;
++			if (!plane->avoid_check)
++			{
++				int saved_cursor = drmModeAtomicGetCursor(req);
++
++				/* This is not matched with an update_success, as we
++				 * never actually commit it, just check that it could
++				 * potentially be committed at some stage. */
++				drm_plane_update_begin(plane);
++				ret = drm_output_populate_atomic_plane(output, plane,
++									   req, false);
++				if (ret > 0)
++					ret = drmModeAtomicCommit(b->drm.fd, req,
++								  DRM_MODE_ATOMIC_TEST_ONLY,
++								  output);
++				if (ret != 0) {
++					drmModeAtomicSetCursor(req, saved_cursor);
++					weston_log("	... no luck [kernel].\n");
++					if (plane->next) {
++						if (plane != output->cursor_plane)
++							drm_output_release_fb(output,
++									  plane->next);
++						plane->next = NULL;
++					}
++					plane->output = NULL;
++					plane->view = NULL;
++					wl_list_remove(&plane->view_destroy.link);
++					next_plane = NULL;
+ 				}
+-				plane->output = NULL;
+-				plane->view = NULL;
+-				wl_list_remove(&plane->view_destroy.link);
+-				next_plane = NULL;
+-			} else {
+-				weston_log("	\\o/\n");
+ 			}
+ 		}
+ 
+@@ -2859,6 +2868,221 @@ drm_assign_planes(struct weston_output *output_base)
+ 		drmModeAtomicFree(req);
+ }
+ 
++//after mdp process, fill params back to drm to commit to drm
++static int
++mdp2drm_sprite_params_handle(struct weston_compositor *ec, struct mdp_snd_sprite *snd)
++{
++	struct drm_backend *b = (struct drm_backend *)ec->backend;
++	struct drm_plane *plane;
++	struct drm_fb *fb;
++	struct gbm_bo *bo;
++	int ret;
++
++	fb = zalloc(sizeof *fb);
++	if (!fb)
++		return -1;
++
++	wl_list_for_each(plane, &b->plane_list, link) {
++		if (plane->plane_id == snd->res->plane_id) {
++			ret = drmModeAddFB(b->drm.fd, snd->width, snd->height, snd->depth, snd->bpp,
++				snd->stride, snd->handle, &fb->fb_id);
++			if (ret < 0) {
++				weston_log("failed to ADDFB: %m\n");
++				weston_log("%s %d w/h/d/b/s/h/fb[%u %u %u %u %u %u %u]\n", __func__, __LINE__,
++					snd->width, snd->height, snd->depth, snd->bpp, snd->stride, snd->handle, &fb->fb_id);
++				plane->next = plane->current;
++			} else {
++				fb->is_mdp_buffer = 1;
++				fb->is_client_buffer = 0;
++				fb->fd = b->drm.fd;
++				fb->size = snd->width * snd->height * snd->bpp / 8;
++				fb->map = snd->map;
++				plane->src_w = snd->width << 16;
++				plane->src_h = snd->height << 16;
++				plane->rotation = 0;
++
++				plane->next = (struct drm_fb *)fb;
++			}
++			if (plane->next != plane->current) {
++				drm_fb_set_buffer(plane->next, plane->view->surface->buffer_ref.buffer);
++			}
++			//free resource
++			bo = (struct gbm_bo *)snd->release.bo;
++			if (bo) {
++				gbm_bo_destroy(bo);
++				bo = NULL;
++			}
++		}
++	}
++
++	return 0;
++}
++
++static int
++mdp2drm_recycle_sprite_handle(struct weston_output *wout, struct mdp_rcv_sprite *rcv)
++{
++	struct weston_compositor *ec = wout->compositor;
++	struct drm_backend *b = (struct drm_backend *)ec->backend;
++	struct drm_plane *plane;
++	struct gbm_bo *bo = NULL;
++
++	weston_log("warning: params transmit to mdp seems not right\n");
++
++	bo = (struct gbm_bo *)rcv->cache.src_bo;
++	if (bo) {
++		gbm_bo_destroy(bo);
++	}
++
++	wl_list_for_each(plane, &b->plane_list, link) {
++		if (plane->plane_id == rcv->res->plane_id) {
++			plane->view = NULL;
++			wl_list_remove(&plane->view_destroy.link);
++		}
++	}
++	return 0;
++}
++
++//export plane params that had been assign to any view
++static int
++drm_send_sprite_to_share(struct drm_output *dout)
++{
++	struct weston_compositor *ec = dout->base.compositor;
++	struct drm_backend *b = (struct drm_backend *)ec->backend;
++	struct mdp_drm_share *pmds = (struct mdp_drm_share *)ec->pmds;
++	struct mdp_rcv_sprite *rcv = NULL;
++	struct wl_resource *buffer_resource;
++	struct linux_dmabuf_buffer *dmabuf;
++	struct gbm_bo *bo;
++	struct drm_plane *plane;
++	uint32_t format, i;
++
++	wl_list_for_each(plane, &b->plane_list, link) {
++		//check if need mdp to process
++		if (plane->next)
++			continue;
++		if (plane->output != dout)
++			continue;
++
++		if (plane->type != WDRM_PLANE_TYPE_OVERLAY)
++			continue;
++
++		/* input params */
++		for (i = 0; i < pmds->nums; i++)
++		{
++			if (pmds->plane[i].plane_id != plane->plane_id) {
++				continue;
++			} else {
++				rcv = &pmds->plane[i].sprite_import;
++				break;
++			}
++		}
++
++		if (!rcv) {
++			weston_log("fail to find mdp_sprite_params in mdp_window::sprite_list\n");
++			return -1;
++		}
++		rcv->res = &pmds->plane[i];
++		rcv->cache.src_bo = NULL;
++		if (!plane->view)
++		{//mean view is destroy, need to flush one more time to clear screen
++			continue;
++		} else {
++			buffer_resource = plane->view->surface->buffer_ref.buffer->resource;
++		}
++
++		if ((dmabuf = linux_dmabuf_buffer_get(buffer_resource))) {
++			format = dmabuf->attributes.format;
++			rcv->src_w = dmabuf->attributes.width;
++			rcv->src_h = dmabuf->attributes.height;
++			drmPrimeFDToHandle(b->drm.fd,
++				dmabuf->attributes.fd[0], &rcv->handle);
++		} else {
++			bo = gbm_bo_import(b->gbm, GBM_BO_IMPORT_WL_BUFFER,
++					   buffer_resource, GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING);
++			if (!bo) {
++				weston_log("error: %s gbm_bo_import fail\n", __func__);
++				return -1;
++			}
++			format = gbm_bo_get_format(bo);
++			rcv->src_w  = gbm_bo_get_width(bo);
++			rcv->src_h  = gbm_bo_get_height(bo);
++			rcv->handle = gbm_bo_get_handle(bo).u32;
++
++			rcv->cache.src_bo = (void *)bo;
++		}
++		//need mdp driver table support XRGB8888
++		rcv->format = weston_check_sprite_format(plane->view, format);
++		if (rcv->format == 0) {
++			weston_log("failed support src_/convert_format[0x%x 0x%x]\n", format, rcv->format);
++			return -1;
++		}
++
++		rcv->format = format;
++		rcv->rotate = plane->rotation;
++
++		rcv->crop_left = plane->src_x >> 16;
++		rcv->crop_top  = plane->src_y >> 16;
++		rcv->crop_w    = plane->src_w >> 16;
++		rcv->crop_h    = plane->src_h >> 16;
++
++		rcv->dst_x = plane->dest_x;
++		rcv->dst_y = plane->dest_y;
++		rcv->dst_w = plane->dest_w;
++		rcv->dst_h = plane->dest_h;
++
++		//mark the data is waiting for mdp process
++		pmds->plane[i].valid = 1;
++		pmds->mdp_needed = 1;
++	}
++
++	if (pmds->mdp_needed) {
++		pthread_cond_broadcast(&pmds->mdp_cond);
++	}
++
++	return 0;
++}
++
++/*
++  * send drm output and plane resource to mdp.
++  * The parameters that transfered main for map to init.
++*/
++static int32_t
++drm2mdp_send_resource(struct weston_compositor *ec, struct mdp_drm_share *pmds)
++{
++	struct drm_backend *b = (struct drm_backend *)ec->backend;
++	struct drm_plane *plane;
++	struct drm_output *dout, *next;
++	int count = 0;
++
++	pmds->drmfd = b->drm.fd;
++	pmds->send_to_drm = mdp2drm_sprite_params_handle;
++	pmds->recycle_sprite = mdp2drm_recycle_sprite_handle;
++
++	wl_list_for_each_safe(dout, next, &ec->output_list,
++				  base.link) {
++		wl_list_for_each(plane, &b->plane_list, link) {
++			if (plane->type != WDRM_PLANE_TYPE_OVERLAY)
++				continue;
++
++			if (drm_plane_crtc_supported(dout,
++			    	plane->possible_crtcs)) {
++				pmds->plane[count].output = &dout->base;
++
++				pmds->plane[count].plane_id = plane->plane_id;
++
++				count ++;
++			}
++		}
++		if (!count) {
++			weston_log("not find crtc to support plane\n");
++		}
++	}
++
++	pmds->nums = count;
++
++	return 0;
++}
++
+ static void
+ drm_output_fini_pixman(struct drm_output *output);
+ 
+@@ -4232,6 +4456,7 @@ drm_plane_view_destroyed(struct wl_listener *listener, void *data)
+ 	struct drm_plane *plane =
+ 		container_of(listener, struct drm_plane, view_destroy);
+ 
++	weston_log("view %p destroyed for plane %d\n", data, plane->plane_id);
+ 	assert(plane->view == data);
+ 	plane->view = NULL;
+ 	weston_log("view %p destroyed for plane %d\n", data, plane->plane_id);
+@@ -4282,7 +4507,6 @@ drm_plane_create(struct drm_backend *b, const drmModePlane *kplane)
+ 		return NULL;
+ 	}
+ 
+-	plane->rotation = (uint32_t)(plane->props.item[WDRM_PLANE_ROTATE].value);
+ 	plane->plane_config.alpha = (uint32_t)(plane->props.item[WDRM_PLANE_ALPHA].value);
+ 	plane->plane_config.colorkey = (uint32_t)(plane->props.item[WDRM_PLANE_COLORKEY].value);
+ 	plane->plane_config.zpos = (uint32_t)(plane->props.item[WDRM_PLANE_ZPOS].value);
+@@ -4541,6 +4765,9 @@ drm_destroy(struct weston_compositor *ec)
+ 
+ 	destroy_sprites(b);
+ 
++	if (ec->pmds)
++		ec->mdp_destroy(ec->mdp_ctx);
++
+ 	weston_compositor_shutdown(ec);
+ 
+ 	if (b->gbm)
+@@ -5082,6 +5309,10 @@ backend_init(struct weston_compositor *compositor,
+ {
+ 	struct drm_backend *b;
+ 	struct weston_drm_backend_config config = {{ 0, }};
++	int32_t (*mdp_backend_init)(struct weston_compositor *ec,
++				int32_t (*drm_res_export)(struct weston_compositor *ec,
++				struct mdp_drm_share *res));
++	int32_t ret;
+ 
+ 	if (config_base == NULL ||
+ 	    config_base->struct_version != WESTON_DRM_BACKEND_CONFIG_VERSION ||
+@@ -5097,5 +5328,15 @@ backend_init(struct weston_compositor *compositor,
+ 	if (b == NULL)
+ 		return -1;
+ 
++	mdp_backend_init = weston_load_module("mdp-renderer-mtk.so", "mdp_backend_init");
++	if (!mdp_backend_init) {
++		weston_log("warning: not find mdp-renderer.so\n");
++		return 0;
++	}
++
++	ret = mdp_backend_init(compositor, drm2mdp_send_resource);
++	if ((ret < 0) || (!compositor->pmds))
++		weston_log("error: init mdp-renderer fail, overlay path can not work\n");
++
+ 	return 0;
+ }
+diff --git a/src/compositor.c b/src/compositor.c
+index cc96fef..91e3b6a 100644
+--- a/src/compositor.c
++++ b/src/compositor.c
+@@ -4740,6 +4740,7 @@ weston_compositor_create(struct wl_display *display, void *user_data)
+ 	wl_list_init(&ec->touch_binding_list);
+ 	wl_list_init(&ec->axis_binding_list);
+ 	wl_list_init(&ec->debug_binding_list);
++	ec->pmds = NULL;                //use for  mdp-drm share data, NULL stand for no mdp valid
+ 
+ 	weston_plane_init(&ec->primary_plane, ec, 0, 0);
+ 	weston_compositor_stack_plane(ec, &ec->primary_plane, NULL);
+diff --git a/src/compositor.h b/src/compositor.h
+index db439ae..97dccd1 100644
+--- a/src/compositor.h
++++ b/src/compositor.h
+@@ -844,6 +844,11 @@ struct weston_compositor {
+ 
+ 	struct weston_renderer *renderer;
+ 
++	//for mdp thread
++	void *pmds;	//mdp drm share
++	int32_t (*mdp_destroy)(void *data);
++	void *mdp_ctx;
++
+ 	pixman_format_code_t read_format;
+ 
+ 	struct weston_backend *backend;
+diff --git a/src/mdp-drm-share-mtk.h b/src/mdp-drm-share-mtk.h
+new file mode 100644
+index 0000000..03bf1f8
+--- /dev/null
++++ b/src/mdp-drm-share-mtk.h
+@@ -0,0 +1,143 @@
++/*
++ * Weston
++ * Copyright (C) 2016 MediaTek Inc
++ *     Author: Nelson Liu <nelson.liu@mediatek.com>
++ *
++ * This software/firmware and related documentation ("MediaTek Software") are
++ * protected under relevant copyright laws. The information contained herein is
++ * confidential and proprietary to MediaTek Inc. and/or its licensors. Without
++ * the prior written permission of MediaTek inc. and/or its licensors, any
++ * reproduction, modification, use or disclosure of MediaTek Software, and
++ * information contained herein, in whole or in part, shall be strictly
++ * prohibited.
++
++ * MediaTek Inc. (C) 2016. All rights reserved.
++
++ * BY OPENING THIS FILE, RECEIVER HEREBY UNEQUIVOCALLY ACKNOWLEDGES AND AGREES
++ * THAT THE SOFTWARE/FIRMWARE AND ITS DOCUMENTATIONS ("MEDIATEK SOFTWARE")
++ * RECEIVED FROM MEDIATEK AND/OR ITS REPRESENTATIVES ARE PROVIDED TO RECEIVER
++ * ON AN "AS-IS" BASIS ONLY. MEDIATEK EXPRESSLY DISCLAIMS ANY AND ALL
++ * WARRANTIES, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE IMPLIED
++ * WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE OR
++ * NONINFRINGEMENT. NEITHER DOES MEDIATEK PROVIDE ANY WARRANTY WHATSOEVER WITH
++ * RESPECT TO THE SOFTWARE OF ANY THIRD PARTY WHICH MAY BE USED BY,
++ * INCORPORATED IN, OR SUPPLIED WITH THE MEDIATEK SOFTWARE, AND RECEIVER AGREES
++ * TO LOOK ONLY TO SUCH THIRD PARTY FOR ANY WARRANTY CLAIM RELATING THERETO.
++ * RECEIVER EXPRESSLY ACKNOWLEDGES THAT IT IS RECEIVER'S SOLE RESPONSIBILITY TO
++ * OBTAIN FROM ANY THIRD PARTY ALL PROPER LICENSES CONTAINED IN MEDIATEK
++ * SOFTWARE. MEDIATEK SHALL ALSO NOT BE RESPONSIBLE FOR ANY MEDIATEK SOFTWARE
++ * RELEASES MADE TO RECEIVER'S SPECIFICATION OR TO CONFORM TO A PARTICULAR
++ * STANDARD OR OPEN FORUM. RECEIVER'S SOLE AND EXCLUSIVE REMEDY AND MEDIATEK'S
++ * ENTIRE AND CUMULATIVE LIABILITY WITH RESPECT TO THE MEDIATEK SOFTWARE
++ * RELEASED HEREUNDER WILL BE, AT MEDIATEK'S OPTION, TO REVISE OR REPLACE THE
++ * MEDIATEK SOFTWARE AT ISSUE, OR REFUND ANY SOFTWARE LICENSE FEES OR SERVICE
++ * CHARGE PAID BY RECEIVER TO MEDIATEK FOR SUCH MEDIATEK SOFTWARE AT ISSUE.
++ */
++#include <stdint.h>
++#include <fcntl.h>
++#include <sys/ioctl.h>
++#include <sys/types.h>
++#include <unistd.h>
++#include <pthread.h>
++#include <stdlib.h>
++#include <sys/mman.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/time.h>
++#include "compositor.h"
++
++#define MAX_SPRITE 8
++#define NUM_BUFFER_PER_PLANE 2
++
++struct drm_sprite_res;
++
++struct mdp_snd_sprite {
++	struct drm_sprite_res *res;
++	uint32_t handle;
++
++	uint32_t stride;
++	uint32_t bpp;
++	uint32_t depth;
++
++	uint32_t width;
++	uint32_t height;
++
++	void *map;
++
++	struct{
++		/* bo::mdp_rcv_sprite->cache.src_bo */
++		void *bo;
++	} release;
++};
++
++struct mdp_rcv_sprite {
++	struct drm_sprite_res *res;
++	uint32_t rotate;
++	uint32_t handle;
++
++	uint32_t src_w, src_h;
++
++	uint32_t dst_x, dst_y;
++	uint32_t dst_w, dst_h;
++
++	int32_t crop_left, crop_top;
++	uint32_t crop_w, crop_h;
++
++	int stride;
++	uint32_t format;
++
++	struct {
++		/* src_bo stand for egl buffer, only not used again can destroy */
++		void *src_bo;
++	} cache;
++};
++
++/*
++  * drm_sprite_res stand for a unit that include input and output data
++  * plane_id: used for match drm plane
++  * output: use w/h to create buffer used as mdp output buffer
++  * and transform to calculate rotate for input buffer
++  * sprite_export: data used to export to drm(mdp output data)
++  * sprite_import: data used to cache data from drm(mdp input data)
++  * valid: 1 mean need to mdp to process.
++*/
++struct drm_sprite_res {
++	uint32_t plane_id;
++	struct weston_output *output;
++
++	struct mdp_snd_sprite sprite_export;
++	struct mdp_rcv_sprite sprite_import;
++
++	int32_t valid;
++};
++
++/*
++  * mdp_drm_share used to share data with drm
++  * drm_sprite_res: all sprites information
++  * nums: actual num of sprites
++  * drmfd: drm fd, used to ioctl cmd
++  * send_to_drm: cb used to send mdp output data to drm
++  * recycle_sprite: some reason cause mdp fail to call it recycle resource
++  * mdp_thread/mdp_mutex/mdp_cond: threads sync
++  * mdp_needed: mark if there have some sprite need mdp to transform
++*/
++struct mdp_drm_share {
++	struct drm_sprite_res plane[MAX_SPRITE];
++	uint32_t nums;
++	int32_t drmfd;
++	int (*send_to_drm)(struct weston_compositor *ec, struct mdp_snd_sprite *sprite);
++	int (*recycle_sprite)(struct weston_output *wout, struct mdp_rcv_sprite *sprite);
++
++	pthread_t mdp_thread;
++	pthread_mutex_t mdp_mutex;
++	pthread_cond_t mdp_cond;
++
++	int32_t mdp_needed;
++};
++
++WL_EXPORT int32_t
++mdp_backend_init(struct weston_compositor *ec,
++		int32_t (*drm_res_export)(struct weston_compositor *ec, struct mdp_drm_share *res));
++
++
+diff --git a/src/mdp-renderer-mtk.c b/src/mdp-renderer-mtk.c
+new file mode 100644
+index 0000000..37862b9
+--- /dev/null
++++ b/src/mdp-renderer-mtk.c
+@@ -0,0 +1,1385 @@
++/*
++ * Weston
++ * Copyright (C) 2016 MediaTek Inc
++ *     Author: Nelson Liu <nelson.liu@mediatek.com>
++ *
++ * This software/firmware and related documentation ("MediaTek Software") are
++ * protected under relevant copyright laws. The information contained herein is
++ * confidential and proprietary to MediaTek Inc. and/or its licensors. Without
++ * the prior written permission of MediaTek inc. and/or its licensors, any
++ * reproduction, modification, use or disclosure of MediaTek Software, and
++ * information contained herein, in whole or in part, shall be strictly
++ * prohibited.
++
++ * MediaTek Inc. (C) 2016. All rights reserved.
++
++ * BY OPENING THIS FILE, RECEIVER HEREBY UNEQUIVOCALLY ACKNOWLEDGES AND AGREES
++ * THAT THE SOFTWARE/FIRMWARE AND ITS DOCUMENTATIONS ("MEDIATEK SOFTWARE")
++ * RECEIVED FROM MEDIATEK AND/OR ITS REPRESENTATIVES ARE PROVIDED TO RECEIVER
++ * ON AN "AS-IS" BASIS ONLY. MEDIATEK EXPRESSLY DISCLAIMS ANY AND ALL
++ * WARRANTIES, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE IMPLIED
++ * WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE OR
++ * NONINFRINGEMENT. NEITHER DOES MEDIATEK PROVIDE ANY WARRANTY WHATSOEVER WITH
++ * RESPECT TO THE SOFTWARE OF ANY THIRD PARTY WHICH MAY BE USED BY,
++ * INCORPORATED IN, OR SUPPLIED WITH THE MEDIATEK SOFTWARE, AND RECEIVER AGREES
++ * TO LOOK ONLY TO SUCH THIRD PARTY FOR ANY WARRANTY CLAIM RELATING THERETO.
++ * RECEIVER EXPRESSLY ACKNOWLEDGES THAT IT IS RECEIVER'S SOLE RESPONSIBILITY TO
++ * OBTAIN FROM ANY THIRD PARTY ALL PROPER LICENSES CONTAINED IN MEDIATEK
++ * SOFTWARE. MEDIATEK SHALL ALSO NOT BE RESPONSIBLE FOR ANY MEDIATEK SOFTWARE
++ * RELEASES MADE TO RECEIVER'S SPECIFICATION OR TO CONFORM TO A PARTICULAR
++ * STANDARD OR OPEN FORUM. RECEIVER'S SOLE AND EXCLUSIVE REMEDY AND MEDIATEK'S
++ * ENTIRE AND CUMULATIVE LIABILITY WITH RESPECT TO THE MEDIATEK SOFTWARE
++ * RELEASED HEREUNDER WILL BE, AT MEDIATEK'S OPTION, TO REVISE OR REPLACE THE
++ * MEDIATEK SOFTWARE AT ISSUE, OR REFUND ANY SOFTWARE LICENSE FEES OR SERVICE
++ * CHARGE PAID BY RECEIVER TO MEDIATEK FOR SUCH MEDIATEK SOFTWARE AT ISSUE.
++ */
++#include <stdint.h>
++#include <fcntl.h>
++#include <sys/ioctl.h>
++#include <sys/types.h>
++#include <unistd.h>
++#include <pthread.h>
++#include <stdlib.h>
++#include <sys/mman.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/time.h>
++#include "wayland-util.h"
++#include <xf86drm.h>
++#include <drm_fourcc.h>
++
++#include "mdp-drm-share-mtk.h"
++#include "linux/videodev2.h"
++
++#define MDP_DEBUG getenv("MDP_DEBUG")
++#define MDP_DUMP getenv("MDP_DUMP")
++
++#define VIDEO_DEV_NAME "/dev/video"
++#define MTK_MDP_MODULE_NAME  "mtk-mdp"
++#define v4l2_close    close
++#define v4l2_ioctl    ioctl
++#define v4l2_open     open
++
++#define mdp_log(fmt, arg...)            \
++	do {                                \
++		if (MDP_DEBUG)                  \
++			weston_log("[mdp-renderer]%u " fmt, weston_compositor_get_time(), ##arg);   \
++	} while (0)
++
++const uint32_t reqbuf_num_ = MAX_SPRITE * NUM_BUFFER_PER_PLANE;
++
++const uint32_t input_memory_type_ = V4L2_MEMORY_DMABUF;
++const uint32_t input_buffer_type_ = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
++
++const uint32_t output_memory_type_ = V4L2_MEMORY_DMABUF;
++const uint32_t output_buffer_type_ = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
++const uint32_t output_buffer_format_ = V4L2_PIX_FMT_ABGR32;
++
++/* mark whether buffer is available*/
++enum BUFFER_STATUS {
++	BUF_DEQUEUED = 0,
++	BUF_QUEUED   = 1,
++};
++
++/*
++ * dma buffer description data struct
++*/
++struct dma_buffer {
++	int32_t handle;
++	/* v4l2_memory_dmabuf */
++	int32_t dma_fd;
++	/* v4l2_memory_userptr and dump data */
++	void *mmap;
++
++	uint32_t width;
++	uint32_t height;
++	uint32_t depth;
++	uint32_t stride;
++	uint32_t bpp;
++	uint32_t size;
++
++	/* drm fd to operate buffer */
++	int32_t fd;
++};
++
++struct mdp_out_buffer {
++	struct dma_buffer *buf;
++	enum v4l2_memory   v4mem;
++	enum BUFFER_STATUS status;
++	uint32_t index;
++};
++
++struct mdp_sprite_params {
++	struct mdp_renderer_ctx *base;
++	/* p::drm_res plane[n] */
++	struct drm_sprite_res *res;
++	/* src params*/
++	struct {
++		void *mmap;
++		int32_t dma_fd;
++		uint32_t size;
++		enum v4l2_memory v4mem;
++		enum BUFFER_STATUS status;
++
++		struct v4l2_format v4fmt;
++		struct v4l2_selection sel;
++		uint32_t index;
++	} s_params;
++	/* dst params */
++	struct {
++		struct mdp_out_buffer buf[NUM_BUFFER_PER_PLANE];
++		struct v4l2_selection sel;
++		struct v4l2_format v4fmt;
++		int32_t current;
++	} d_params;
++
++	uint32_t plane_id;
++	/* get from output and view */
++	uint32_t rotate;
++
++	struct wl_list link;
++};
++
++struct mdp_renderer_ctx {
++	/* cache all sprite input/output params */
++	struct mdp_drm_share mds;
++
++	/* cache data from mds */
++	struct mdp_sprite_params msp[MAX_SPRITE];
++
++	struct weston_compositor *base;
++
++	int32_t (*get_drm_resource)(struct weston_compositor *ec, struct mdp_drm_share *res);
++
++	int32_t mdpfd;
++
++	uint32_t input_streamon;
++	uint32_t output_streamon;
++
++	/* insert sprite that need mdp to transform */
++	struct wl_list mdp_list;
++};
++
++struct mdp_ctrl{
++	uint32_t rotate;
++	uint32_t hflip;
++	uint32_t vflip;
++};
++
++struct v4l2_fourcc_info {
++	unsigned int v4l2_format;
++	int plane_cnt;
++	int bpp;
++};
++
++static int32_t
++mdp_destroy(void *data);
++
++static int32_t
++open_device(struct mdp_renderer_ctx *m)
++{
++	int32_t fd = -1;
++	char dev_node[64];
++	int32_t i = 0;
++	struct v4l2_capability c;
++
++	for (i = 0; i < 64; i++) {
++		sprintf(dev_node, "%s%d", VIDEO_DEV_NAME, i);
++		fd = v4l2_open(dev_node, O_RDWR | O_CLOEXEC, 0);
++		if (-1 == fd) {
++			continue;
++		}
++
++		memset(&c, 0, sizeof(c));
++		v4l2_ioctl(fd, VIDIOC_QUERYCAP, &c);
++		mdp_log("v4l2 driver: %s\n", c.driver);
++		if (strcmp(c.driver, MTK_MDP_MODULE_NAME) != 0) {
++			v4l2_close(fd);
++			continue;
++		}
++
++		m->mdpfd = fd;
++		break;
++	}
++
++	if (-1 != m->mdpfd) {
++		mdp_log("open %s success! video:%d\n", dev_node, m->mdpfd);
++		return 0;
++	}
++	else {
++		mdp_log("open %s failed!!!\n", MTK_MDP_MODULE_NAME);
++		return -1;
++	}
++}
++
++static int32_t
++close_device(struct mdp_renderer_ctx *m)
++{
++	if (-1 != m->mdpfd) {
++		v4l2_close(m->mdpfd);
++		m->mdpfd = -1;
++	}
++
++	return 0;
++}
++
++static int32_t
++mdp_dequeue_input_buffer(struct mdp_sprite_params *sp)
++{
++	struct mdp_renderer_ctx *m = sp->base;
++	int32_t mdpfd = m->mdpfd;
++	struct v4l2_buffer dqbuf;
++	struct v4l2_plane planes[VIDEO_MAX_PLANES];
++
++	memset(&dqbuf, 0, sizeof(dqbuf));
++	memset(planes, 0, sizeof(planes));
++
++	dqbuf.type = input_buffer_type_;
++	dqbuf.memory = input_memory_type_;
++	dqbuf.m.planes = planes;
++	dqbuf.length = sp->s_params.v4fmt.fmt.pix_mp.num_planes;
++	if (v4l2_ioctl(mdpfd, VIDIOC_DQBUF, &dqbuf) < 0) {
++		mdp_log("error: VIDIOC_DQBUF input buf\n");
++		return -1;
++	}
++
++	if (dqbuf.flags & V4L2_BUF_FLAG_ERROR) {
++		mdp_log("error: dqbuf input buffer is marked as error, flags=0x%08x\n", dqbuf.flags);
++		return -1;
++	}
++
++	if (sp->s_params.index == dqbuf.index)
++		sp->s_params.status = BUF_DEQUEUED;
++	else {
++		mdp_log("error: input buffer dequeue index mismatch with queue\n");
++		return -1;
++	}
++
++	return 0;
++}
++
++static int32_t
++mdp_dequeue_output_buffer(struct mdp_sprite_params *sp)
++{
++	struct mdp_renderer_ctx *m = sp->base;
++	int32_t mdpfd = m->mdpfd;
++	struct v4l2_buffer dqbuf;
++	struct v4l2_plane planes[VIDEO_MAX_PLANES];
++
++	memset(&dqbuf, 0, sizeof(dqbuf));
++	memset(planes, 0, sizeof(planes));
++
++	dqbuf.type = output_buffer_type_;
++	dqbuf.memory = output_memory_type_;
++	dqbuf.m.planes = planes;
++	dqbuf.length = 1;
++	if (v4l2_ioctl(mdpfd, VIDIOC_DQBUF, &dqbuf) != 0) {
++		mdp_log("error: VIDIOC_DQBUF output buf\n");
++		return -1;
++	}
++
++	if (dqbuf.flags & V4L2_BUF_FLAG_ERROR) {
++		mdp_log("error: dqbuf output buffer is marked as error, flags=0x%08x\n", dqbuf.flags);
++		return -1;
++	}
++
++	if (sp->d_params.buf[sp->d_params.current].index != dqbuf.index) {
++		mdp_log("error: output buffer dequeue index[%d]"
++			" mismatch with queue[%d]\n", dqbuf.index, sp->d_params.buf[sp->d_params.current].index);
++		return -1;
++	} else {
++		sp->d_params.buf[sp->d_params.current].status = BUF_DEQUEUED;
++	}
++
++	return 0;
++}
++
++static int32_t
++mdp_sprite_dequeue(struct mdp_sprite_params *sp)
++{
++	int32_t ret;
++	struct mdp_renderer_ctx *m = sp->base;
++	int32_t mdpfd = m->mdpfd;
++	struct v4l2_requestbuffers reqbufs;
++
++	ret = mdp_dequeue_input_buffer(sp);
++	if (ret >= 0)
++		ret = mdp_dequeue_output_buffer(sp);
++
++	if (ret < 0)
++		return -1;
++
++	if (m->input_streamon) {
++		__u32 type = input_buffer_type_;
++
++		if (v4l2_ioctl(mdpfd, VIDIOC_STREAMOFF, &type) != 0) {
++			mdp_log("error: VIDIOC_STREAMOFF input buf\n");
++			return -1;
++		}
++		m->input_streamon = 0;
++
++		mdp_log("%s %d Dq input streamoff end\n", __func__, __LINE__);
++	}
++
++	if (m->output_streamon) {
++		__u32 type = output_buffer_type_;
++
++		if (v4l2_ioctl(mdpfd, VIDIOC_STREAMOFF, &type) != 0) {
++			mdp_log("error: VIDIOC_STREAMOFF output buf\n");
++			return -1;
++		}
++		m->output_streamon = 0;
++		mdp_log("%s %d Dq output streamoff end\n", __func__, __LINE__);
++	}
++
++	memset(&reqbufs, 0, sizeof(reqbufs));
++	reqbufs.count = 0;
++	reqbufs.type = input_buffer_type_;
++	reqbufs.memory = input_memory_type_;
++	if (v4l2_ioctl(mdpfd, VIDIOC_REQBUFS, &reqbufs) != 0) {
++		mdp_log("failed: VIDIOC_REQBUFS 0 input buf\n");
++		return -1;
++	}
++
++	mdp_log("%s %d input VIDIOC_REQBUFS(0) end\n", __func__, __LINE__);
++
++	memset(&reqbufs, 0, sizeof(reqbufs));
++	reqbufs.count = 0;
++	reqbufs.type = output_buffer_type_;
++	reqbufs.memory = output_memory_type_;
++	if (v4l2_ioctl(mdpfd, VIDIOC_REQBUFS, &reqbufs) != 0) {
++		mdp_log("failed: VIDIOC_REQBUFS 0 output buf\n");
++		return -1;
++	}
++
++	mdp_log("%s %d output VIDIOC_REQBUFS(0) end\n", __func__, __LINE__);
++
++	return 0;
++}
++
++/* output buffer is single-plane */
++static int32_t
++mdp_enqueue_output_buffer(struct mdp_sprite_params *sp)
++{
++	uint32_t i, offset = 0;
++	struct v4l2_buffer qbuf;
++	struct v4l2_plane qbuf_planes[VIDEO_MAX_PLANES];
++	struct mdp_renderer_ctx *m = sp->base;
++	int32_t mdpfd = m->mdpfd;
++	int32_t index = -1;
++
++	memset(&qbuf, 0, sizeof(qbuf));
++	memset(qbuf_planes, 0, sizeof(qbuf_planes));
++
++	sp->d_params.current++;
++
++	if (sp->d_params.current >= NUM_BUFFER_PER_PLANE)
++		sp->d_params.current = 0;
++
++	index = sp->d_params.current;
++	if (sp->d_params.buf[index].status != BUF_DEQUEUED) {
++		mdp_log("error: %s %d status check\n", __func__, __LINE__);
++	}
++
++	qbuf.index = sp->d_params.buf[index].index;
++
++	if (sp->d_params.buf[index].v4mem == V4L2_MEMORY_USERPTR) {
++		for (i = 0; i < sp->d_params.v4fmt.fmt.pix_mp.num_planes; i++) {
++			qbuf_planes[i].bytesused = sp->d_params.v4fmt.fmt.pix_mp.plane_fmt[i].sizeimage;
++			qbuf_planes[i].length =  sp->d_params.v4fmt.fmt.pix_mp.plane_fmt[i].sizeimage;
++			qbuf_planes[i].m.userptr = (unsigned long)sp->d_params.buf[index].buf->mmap + offset;
++			qbuf_planes[i].data_offset = 0;
++			offset += qbuf_planes[i].bytesused;
++		}
++	} else if (sp->d_params.buf[index].v4mem == V4L2_MEMORY_DMABUF) {
++		for (i = 0; i < sp->d_params.v4fmt.fmt.pix_mp.num_planes; i++) {
++			qbuf_planes[i].bytesused = sp->d_params.v4fmt.fmt.pix_mp.plane_fmt[i].sizeimage + offset;
++			qbuf_planes[i].length =  sp->d_params.v4fmt.fmt.pix_mp.plane_fmt[i].sizeimage + offset;
++			qbuf_planes[i].m.fd = sp->d_params.buf[index].buf->dma_fd;
++			qbuf_planes[i].data_offset = offset;
++			offset += qbuf_planes[i].bytesused;
++			mdp_log("%s %d qbuf_planes[%d].bytesused[%u],dmafd[%d] plane_id[%d]\n",
++				__func__, __LINE__, i, qbuf_planes[i].bytesused,
++				qbuf_planes[i].m.fd, sp->res->plane_id);
++		}
++	} else {
++		//to do
++	}
++
++	qbuf.type = output_buffer_type_;
++	qbuf.memory = output_memory_type_;
++	qbuf.m.planes = qbuf_planes;
++	qbuf.length = sp->d_params.v4fmt.fmt.pix_mp.num_planes;
++
++	if (v4l2_ioctl(mdpfd, VIDIOC_QBUF, &qbuf) != 0) {
++		mdp_log("error: VIDIOC_QBUF output qbuf\n");
++		return -1;
++	}
++
++	sp->d_params.buf[index].status = BUF_QUEUED;
++
++	return 0;
++}
++
++
++/* input buffer is multi-plane */
++static int32_t
++mdp_enqueue_input_buffer(struct mdp_sprite_params *sp)
++{
++	uint32_t i, offset = 0;
++	struct v4l2_buffer qbuf;
++	struct v4l2_plane qbuf_planes[VIDEO_MAX_PLANES];
++	struct mdp_renderer_ctx *m = sp->base;
++	int32_t mdpfd = m->mdpfd;
++	int32_t ret;
++
++	memset(&qbuf, 0, sizeof(qbuf));
++	memset(qbuf_planes, 0, sizeof(qbuf_planes));
++
++	if (sp->s_params.status != BUF_DEQUEUED) {
++		mdp_log("error: %s %d status check\n", __func__, __LINE__);
++	}
++
++	if (sp->s_params.v4mem == V4L2_MEMORY_USERPTR) {
++		for (i = 0; i < sp->s_params.v4fmt.fmt.pix_mp.num_planes; i++) {
++			qbuf_planes[i].bytesused = sp->s_params.v4fmt.fmt.pix_mp.plane_fmt[i].sizeimage;
++			qbuf_planes[i].length =  sp->s_params.v4fmt.fmt.pix_mp.plane_fmt[i].sizeimage;
++			qbuf_planes[i].m.userptr = (unsigned long)sp->s_params.mmap + offset;
++			qbuf_planes[i].data_offset = 0;
++			offset += qbuf_planes[i].bytesused;
++			mdp_log("%s %d qbuf_planes[%d].bytesused[%u],ptr[%lu] plane_id[%d]\n",
++				__func__, __LINE__, i, qbuf_planes[i].bytesused,
++				qbuf_planes[i].m.userptr, sp->res->plane_id);
++		}
++	} else if (sp->s_params.v4mem == V4L2_MEMORY_DMABUF) {
++		for (i = 0; i < sp->s_params.v4fmt.fmt.pix_mp.num_planes; i++) {
++			qbuf_planes[i].bytesused = sp->s_params.v4fmt.fmt.pix_mp.plane_fmt[i].sizeimage + offset;
++			qbuf_planes[i].length =  sp->s_params.v4fmt.fmt.pix_mp.plane_fmt[i].sizeimage + offset;
++			qbuf_planes[i].length = sp->s_params.size;
++			qbuf_planes[i].m.fd = sp->s_params.dma_fd;
++			qbuf_planes[i].data_offset = offset;
++
++			mdp_log("%s %d qbuf_planes[%d].bytesused[%u],fd[%d] plane_id[%d] offset[%u], length[%u]\n",
++				__func__, __LINE__, i, qbuf_planes[i].bytesused,
++				qbuf_planes[i].m.fd, sp->res->plane_id, offset, qbuf_planes[i].length);
++			offset += qbuf_planes[i].bytesused;
++		}
++	} else {
++		//to do
++	}
++
++	qbuf.index = sp->s_params.index;
++	qbuf.type = input_buffer_type_;
++	qbuf.memory = input_memory_type_;
++	qbuf.m.planes = qbuf_planes;
++	qbuf.length = sp->s_params.v4fmt.fmt.pix_mp.num_planes;
++
++	ret = v4l2_ioctl(mdpfd, VIDIOC_QBUF, &qbuf);
++	if (ret < 0) {
++		perror("VIDIOC_QBUF input");
++		return -1;
++	}
++
++	sp->s_params.status = BUF_QUEUED;
++
++	return 0;
++}
++
++static int32_t
++mdp_sprite_enqueue(struct mdp_sprite_params *sp)
++{
++	struct mdp_renderer_ctx *m = sp->base;
++	int32_t mdpfd = m->mdpfd;
++
++	mdp_log("--> %s start\n", __func__);
++
++	if (mdp_enqueue_input_buffer(sp) < 0) {
++		mdp_log("error: %s %d failed\n", __func__, __LINE__);
++		return -1;
++	}
++
++	if (mdp_enqueue_output_buffer(sp) < 0) {
++		mdp_log("error: %s %d failed\n", __func__, __LINE__);
++		return -1;
++	}
++
++	if (!m->input_streamon) {
++		__u32 type = input_buffer_type_;
++
++		if (v4l2_ioctl(mdpfd, VIDIOC_STREAMON, &type) != 0) {
++			mdp_log("error: VIDIOC_STREAMON input buf\n");
++			return -1;
++		}
++		m->input_streamon = 1;
++	}
++
++	/* Start VIDIOC_STREAMON if we haven't yet. */
++	if (!m->output_streamon) {
++		__u32 type = output_buffer_type_;
++
++		if (v4l2_ioctl(mdpfd, VIDIOC_STREAMON, &type) != 0) {
++			mdp_log("error: VIDIOC_STREAMON output buf\n");
++			return -1;
++		}
++		m->output_streamon = 1;
++	}
++
++	mdp_log("<-- %s end\n", __func__);
++	return 0;
++}
++
++/*
++ * used for dump buffer to debug.
++ * buf: buffer address of begin
++ * len: all buffer size
++ * file_name: where to dump(now only support sda1 to store)
++*/
++static int32_t
++_write_file(void *buf, int32_t len, const char *file_name)
++{
++    int32_t ret, nwrite = 0;
++
++    FILE *fp = fopen(file_name, "wb");
++    if (!fp)
++    {
++        fprintf(stderr,"debug: file %s open failed\n", file_name);
++        return -1;
++    }
++
++    while (nwrite < len) {
++        ret = fwrite(buf + nwrite, 1, len - nwrite, fp);
++        if (!ret)
++                break;
++        nwrite += ret;
++    }
++
++    fclose(fp);
++    return 0;
++}
++
++/*
++ * send mdp output data back to share region, and also can dump data.
++*/
++static int32_t
++mdp_send_v4l2_to_share(struct mdp_sprite_params *sp)
++{
++	char filename[64] = {0};
++	int32_t width, height, stride, ret;
++	void *map = sp->d_params.buf[sp->d_params.current].buf->mmap;
++
++	mdp_log("--> %s start\n", __func__);
++
++	sp->res->sprite_export.handle = sp->d_params.buf[sp->d_params.current].buf->handle;
++	//be careful:w/h/stride are mdp outbuffer size, not full screen
++	sp->res->sprite_export.width  = sp->d_params.v4fmt.fmt.pix_mp.width;
++	sp->res->sprite_export.height = sp->d_params.v4fmt.fmt.pix_mp.height;
++	sp->res->sprite_export.depth  = sp->d_params.buf[sp->d_params.current].buf->depth;
++	sp->res->sprite_export.bpp    = sp->d_params.buf[sp->d_params.current].buf->bpp;
++	sp->res->sprite_export.stride =
++		sp->d_params.v4fmt.fmt.pix_mp.width * sp->d_params.buf[sp->d_params.current].buf->bpp / 8;
++
++	sp->res->sprite_export.release.bo = sp->res->sprite_import.cache.src_bo;
++	sp->res->sprite_export.res = sp->res;
++	sp->res->sprite_export.map = map;
++
++	if (input_memory_type_ == V4L2_MEMORY_USERPTR)
++	{
++		ret = munmap(sp->s_params.mmap, sp->s_params.size);
++		if (ret < 0)
++			perror("munmap error:");
++	} else if (input_memory_type_ == V4L2_MEMORY_DMABUF) {
++		if (sp->s_params.dma_fd > 0) {
++			ret = close(sp->s_params.dma_fd);
++			if (ret < 0)
++				perror("close error:");
++		}
++	} else {
++		//to do
++	}
++
++	/* dump out buffer */
++	if (MDP_DUMP)
++	{
++		uint32_t time = weston_compositor_get_time();
++		width = sp->res->sprite_export.width;
++		height = sp->res->sprite_export.height;
++		stride = sp->res->sprite_export.stride;
++
++		mdp_log("[dump] %s %d map=%p size = %d\n",
++			__func__, __LINE__, map, stride * height);
++
++		snprintf(filename, 64, "/run/media/sda1/_dump_mdp_out_%u_%ux%u", time, width, height);
++		_write_file(map, stride * height, filename);
++	}
++
++	mdp_log("--> %s end\n", __func__);
++
++	return 0;
++}
++
++static void
++mdp_get_video_ctrl(struct mdp_ctrl *ctrl, uint32_t rotate)
++{
++	switch(rotate) {
++	case WL_OUTPUT_TRANSFORM_NORMAL:
++		ctrl->rotate = 0;
++		ctrl->hflip = 0;
++		ctrl->vflip = 0;
++		break;
++	case WL_OUTPUT_TRANSFORM_90:
++		ctrl->rotate = 90;
++		ctrl->hflip = 0;
++		ctrl->vflip = 0;
++		break;
++	case WL_OUTPUT_TRANSFORM_180:
++		ctrl->rotate = 180;
++		ctrl->hflip = 0;
++		ctrl->vflip = 0;
++		break;
++	case WL_OUTPUT_TRANSFORM_270:
++		ctrl->rotate = 270;
++		ctrl->hflip = 0;
++		ctrl->vflip = 0;
++		break;
++	case WL_OUTPUT_TRANSFORM_FLIPPED:
++		ctrl->rotate = 0;
++		ctrl->hflip = 0;
++		ctrl->vflip = 1;
++		break;
++	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
++		ctrl->rotate = 90;
++		ctrl->hflip = 0;
++		ctrl->vflip = 1;
++		break;
++	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
++		ctrl->rotate = 180;
++		ctrl->hflip = 0;
++		ctrl->vflip = 1;
++		break;
++	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
++		ctrl->rotate = 270;
++		ctrl->hflip = 0;
++		ctrl->vflip = 1;
++		break;
++	default:
++		mdp_log("error: fail to find transform in %s\n", __func__);
++		ctrl->rotate = 0;
++		ctrl->hflip = 0;
++		ctrl->vflip = 0;
++		break;
++	}
++}
++
++static int32_t
++mdp_set_input_params(struct mdp_sprite_params *sp)
++{
++	int32_t ret, tmp;
++	struct v4l2_control control;
++	struct mdp_ctrl ctrl;
++	struct v4l2_requestbuffers reqbufs;
++
++	mdp_log("--> %s start\n", __func__);
++
++	mdp_get_video_ctrl(&ctrl, sp->rotate);
++	memset(&control, 0, sizeof(control));
++	control.id = V4L2_CID_ROTATE;
++	control.value = ctrl.rotate;
++	ret = v4l2_ioctl (sp->base->mdpfd, VIDIOC_S_CTRL, &control);
++	if (ret < 0) {
++		mdp_log("error: fail VIDIOC_S_CTRL V4L2_CID_ROTATE\n");
++		return -1;
++	}
++
++	memset(&control, 0, sizeof(control));
++	control.id = V4L2_CID_VFLIP;
++	control.value = ctrl.vflip;
++	ret = v4l2_ioctl (sp->base->mdpfd, VIDIOC_S_CTRL, &control);
++	if (ret < 0) {
++		mdp_log("error: fail VIDIOC_S_CTRL V4L2_CID_VFLIP\n");
++		return -1;
++	}
++
++	memset(&control, 0, sizeof(control));
++	control.id = V4L2_CID_ALPHA_COMPONENT;
++	control.value = 255;
++	ret = v4l2_ioctl (sp->base->mdpfd, VIDIOC_S_CTRL, &control);
++	if (ret < 0) {
++		mdp_log("error: fail VIDIOC_S_CTRL V4L2_CID_ALPHA_COMPONENT\n");
++		return -1;
++	}
++
++	ret = -1;
++	ret = v4l2_ioctl (sp->base->mdpfd, VIDIOC_S_FMT, &sp->s_params.v4fmt);
++	if (ret < 0) {
++		mdp_log("error: fail VIDIOC_S_FMT input bufs fd[%d]\n", sp->base->mdpfd);
++		return -1;
++	}
++
++	tmp = sp->s_params.sel.type;
++	sp->s_params.sel.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
++	ret = v4l2_ioctl (sp->base->mdpfd, VIDIOC_S_SELECTION, &sp->s_params.sel);
++	if (ret < 0) {
++		mdp_log("error: fail VIDIOC_S_SELECTION input input bufs\n");
++		return -1;
++	}
++	sp->s_params.sel.type = tmp;
++
++	if ((V4L2_MEMORY_USERPTR == sp->s_params.v4mem) ||
++		(V4L2_MEMORY_DMABUF == sp->s_params.v4mem)) {
++		sp->s_params.status = BUF_DEQUEUED;
++	} else {
++		mdp_log("to do\n");
++	}
++
++	memset(&reqbufs, 0, sizeof(reqbufs));
++	reqbufs.count = reqbuf_num_;
++	reqbufs.type = input_buffer_type_;
++	reqbufs.memory = input_memory_type_;
++	ret = v4l2_ioctl (sp->base->mdpfd, VIDIOC_REQBUFS, &reqbufs);
++	if (ret < 0) {
++		mdp_log("error: fail VIDIOC_REQBUFS input bufs\n");
++		return -1;
++	}
++
++	mdp_log("<-- %s end\n", __func__);
++
++	return 0;
++}
++
++static int32_t
++mdp_set_output_params(struct mdp_sprite_params *sp)
++{
++	int32_t ret;
++	struct v4l2_requestbuffers reqbufs;
++
++	mdp_log("--> %s start\n", __func__);
++
++	ret = v4l2_ioctl (sp->base->mdpfd, VIDIOC_S_FMT, &sp->d_params.v4fmt);
++	if (ret < 0) {
++		mdp_log("error: fail VIDIOC_S_FMT output bufs\n");
++		return -1;
++	}
++
++	memset(&reqbufs, 0, sizeof(reqbufs));
++	reqbufs.count = reqbuf_num_;
++	reqbufs.type = output_buffer_type_;
++	reqbufs.memory = output_memory_type_;
++
++	ret = v4l2_ioctl (sp->base->mdpfd, VIDIOC_REQBUFS, &reqbufs);
++	if (ret < 0) {
++		mdp_log("error: fail VIDIOC_REQBUFS output bufs\n");
++		return -1;
++	}
++
++	mdp_log("<-- %s end\n", __func__);
++
++	return 0;
++}
++
++static int32_t
++ServiceDeviceTask(struct mdp_renderer_ctx *m)
++{
++	struct mdp_sprite_params *sp, *next;
++	int32_t ret;
++
++	wl_list_for_each_safe(sp, next, &m->mdp_list, link){
++		//S_CTRL/S_FMT/S_CROP/REQBUFS
++		ret = mdp_set_input_params(sp);
++		if (ret < 0)
++			goto out;
++		//S_FMT/REQBUFS
++		ret = mdp_set_output_params(sp);
++		if (ret < 0)
++			goto out;
++
++		if(mdp_sprite_enqueue(sp) < 0) {
++			mdp_log("error: %s %d Enqueue() failed\n", __func__, __LINE__);
++			goto out;
++		}
++		if (mdp_sprite_dequeue(sp) < 0) {
++			mdp_log("error: %s %d Dequeue() failed\n", __func__, __LINE__);
++			goto out;
++		}
++
++		continue;
++out:
++		sp->res->valid = 0;
++		m->mds.recycle_sprite(sp->res->output,
++                              &sp->res->sprite_import);
++		wl_list_remove(&sp->link);
++	}
++
++	return 0;
++}
++
++static struct v4l2_fourcc_info fourcc_tbl[] = {
++	{V4L2_PIX_FMT_RGB565, 1, 16},
++	{V4L2_PIX_FMT_XRGB32, 1, 32},
++	{V4L2_PIX_FMT_XBGR32, 1, 32},
++	{V4L2_PIX_FMT_ARGB32, 1, 32},
++	{V4L2_PIX_FMT_ABGR32, 1, 32},
++	{V4L2_PIX_FMT_YUYV, 1, 16},
++	{V4L2_PIX_FMT_VYUY, 1, 16},
++	{V4L2_PIX_FMT_NV12, 1, 12},
++	{V4L2_PIX_FMT_NV21, 1, 12},
++	{V4L2_PIX_FMT_NV16, 1, 16},
++	{V4L2_PIX_FMT_NV61, 1, 16},
++	{V4L2_PIX_FMT_YUV420, 1, 12},
++	{V4L2_PIX_FMT_YVU420, 1, 12},
++	{V4L2_PIX_FMT_NV12M, 2, 12},
++	{V4L2_PIX_FMT_NV21M, 2, 12},
++	{V4L2_PIX_FMT_NV16M, 2, 16},
++	{V4L2_PIX_FMT_NV61M, 2, 16},
++	{V4L2_PIX_FMT_YUV420M, 3, 12},
++	{V4L2_PIX_FMT_YVU420M, 3, 12},
++	{0, 0, 0},
++};
++
++static struct v4l2_fourcc_info *
++get_v4l2_format_info(unsigned int format)
++{
++	int i;
++
++	for (i = 0; ; i++) {
++		if ( format == fourcc_tbl[i].v4l2_format){
++			return &fourcc_tbl[i];
++		}
++		if ( fourcc_tbl[i].v4l2_format == 0)
++			break;
++	}
++	return NULL;
++}
++
++static int32_t
++Format2PlaneFmt(uint32_t format_fourcc, uint32_t w, uint32_t h,
++		struct v4l2_plane_pix_format *plane_fmt,
++		uint32_t *nplanes, int32_t do_align)
++{
++	uint32_t align_w, align_h;
++	struct v4l2_fourcc_info *format_info;
++
++	format_info = get_v4l2_format_info(format_fourcc);
++	if (format_info == NULL)
++		return -1;
++
++	if (do_align) {
++		align_w = (w + 15) & (~15);
++		align_h = (h + 15) & (~15);
++	} else {
++		align_w = w;
++		align_h = h;
++	}
++
++	if (format_info->plane_cnt == 3) {
++		if (format_info->bpp == 12) {
++			plane_fmt[0].bytesperline = align_w;
++			plane_fmt[1].bytesperline = plane_fmt[0].bytesperline / 2;
++			plane_fmt[2].bytesperline = plane_fmt[0].bytesperline / 2;
++			plane_fmt[0].sizeimage = plane_fmt[0].bytesperline * align_h;
++			plane_fmt[1].sizeimage = plane_fmt[1].bytesperline * align_h / 2;
++			plane_fmt[2].sizeimage = plane_fmt[2].bytesperline * align_h / 2;
++		} else {
++			mdp_log("error: %s %d please add new format 0x%x\n",
++						__func__, __LINE__, format_info->v4l2_format);
++			return -1;
++		}
++	} else if (format_info->plane_cnt == 2) {
++		plane_fmt[0].bytesperline = align_w;
++		plane_fmt[0].sizeimage = plane_fmt[0].bytesperline * align_h;
++		if (format_info->bpp == 16) {
++			plane_fmt[1].bytesperline = plane_fmt[0].bytesperline;
++			plane_fmt[1].sizeimage = plane_fmt[1].bytesperline * align_h;
++			mdp_log("%s %d pitch/size0[%u %u] pitch/size1[%u %u]\n",
++				__func__, __LINE__, plane_fmt[0].bytesperline, plane_fmt[0].sizeimage,
++				plane_fmt[1].bytesperline, plane_fmt[1].sizeimage);
++		}
++		else if (format_info->bpp == 12) {
++			plane_fmt[1].bytesperline = plane_fmt[0].bytesperline / 2;
++			plane_fmt[1].sizeimage = plane_fmt[1].bytesperline * align_h;
++		} else {
++			mdp_log("error: %s %d please add new format 0x%x\n",
++						__func__, __LINE__, format_info->v4l2_format);
++			return -1;
++		}
++	} else {
++		plane_fmt[0].bytesperline = align_w * format_info->bpp / 8;
++		plane_fmt[0].sizeimage = plane_fmt[0].bytesperline * align_h;
++	}
++
++	*nplanes = format_info->plane_cnt;
++
++	mdp_log("debug: %s %d format/bpp/plane_cnt[0x%x %d %u]\n",
++		__func__, __LINE__, format_info->v4l2_format, format_info->bpp, *nplanes);
++
++	return 0;
++}
++
++static uint32_t mdp_map_drm_color_format(uint32_t drm_format)
++{
++	switch (drm_format) {
++	case DRM_FORMAT_RGB565:
++		return V4L2_PIX_FMT_RGB565;
++	case DRM_FORMAT_ARGB8888:
++		return V4L2_PIX_FMT_ABGR32;
++	case DRM_FORMAT_XRGB8888:
++		return V4L2_PIX_FMT_XBGR32;
++	case DRM_FORMAT_YUYV:
++		return V4L2_PIX_FMT_YUYV;
++	case DRM_FORMAT_YVYU:
++		return V4L2_PIX_FMT_YVYU;
++	case DRM_FORMAT_UYVY:
++		return V4L2_PIX_FMT_UYVY;
++	case DRM_FORMAT_VYUY:
++		return V4L2_PIX_FMT_VYUY;
++	case DRM_FORMAT_NV12:
++		return V4L2_PIX_FMT_NV12;
++	case DRM_FORMAT_NV21:
++		return V4L2_PIX_FMT_NV21;
++	case DRM_FORMAT_NV16:
++		return V4L2_PIX_FMT_NV16;
++	case DRM_FORMAT_NV61:
++		return V4L2_PIX_FMT_NV61;
++	case DRM_FORMAT_YUV420:
++		return V4L2_PIX_FMT_YUV420;
++	case DRM_FORMAT_YVU420:
++		return V4L2_PIX_FMT_YVU420;
++	default:
++		return 0;
++	}
++	return 0;
++}
++
++//update share data from v4l2
++static void
++mdp_send_v4l2_to_drm(struct mdp_renderer_ctx *m)
++{
++	struct mdp_sprite_params *sp, *next;
++
++	wl_list_for_each_safe(sp, next, &m->mdp_list, link) {
++		//copy mdp data to share sprite data
++		mdp_send_v4l2_to_share(sp);
++		//send data back to compositor-drm
++		m->mds.send_to_drm(sp->base->base, &sp->res->sprite_export);
++
++		wl_list_remove(&sp->link);
++
++		sp->res->valid = 0;
++	}
++}
++
++//fill all sprites that need to call mdp
++static int32_t
++mdp_send_share_to_v4l2(struct mdp_renderer_ctx *m)
++{
++	uint32_t i, j, v4l2format, nplanes;
++	int32_t fd = m->mds.drmfd;
++	struct v4l2_plane_pix_format plane_fmt[VIDEO_MAX_PLANES];
++	uint32_t size = 0;
++	int32_t ret;
++	void *map;
++
++	for (i = 0; i < m->mds.nums; i++)
++	{
++		if (m->mds.plane[i].valid)
++		{
++			m->msp[i].s_params.v4fmt.type = input_buffer_type_;
++			m->msp[i].s_params.v4fmt.fmt.pix_mp.width = m->mds.plane[i].sprite_import.src_w;
++			m->msp[i].s_params.v4fmt.fmt.pix_mp.height = m->mds.plane[i].sprite_import.src_h;
++			v4l2format = mdp_map_drm_color_format(m->mds.plane[i].sprite_import.format);
++			if (v4l2format == 0) {
++				mdp_log("format[0x%x] not support\n",
++					m->mds.plane[i].sprite_import.format);
++				goto warning;
++			}
++			m->msp[i].s_params.v4fmt.fmt.pix_mp.pixelformat = v4l2format;
++			Format2PlaneFmt(m->msp[i].s_params.v4fmt.fmt.pix_mp.pixelformat,
++					m->msp[i].s_params.v4fmt.fmt.pix_mp.width,
++					m->msp[i].s_params.v4fmt.fmt.pix_mp.height,
++					plane_fmt, &nplanes, 1);
++
++			m->msp[i].s_params.v4fmt.fmt.pix_mp.num_planes = nplanes;
++			size = 0;
++			for (j = 0; j < nplanes; ++j) {
++				m->msp[i].s_params.v4fmt.fmt.pix_mp.plane_fmt[j].sizeimage = plane_fmt[j].sizeimage;
++				m->msp[i].s_params.v4fmt.fmt.pix_mp.plane_fmt[j].bytesperline = plane_fmt[j].bytesperline;
++				size += plane_fmt[j].sizeimage;
++			}
++
++			if (input_memory_type_ == V4L2_MEMORY_USERPTR) {
++				struct drm_mode_map_dumb map_arg;
++
++				map_arg.handle =  m->mds.plane[i].sprite_import.handle;
++				ret = drmIoctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &map_arg);
++				if (ret < 0) {
++					fprintf(stderr,"error: drmIoctl DRM_IOCTL_MODE_MAP_DUMB"
++								" %d id[%d]\n", ret, m->mds.plane[i].plane_id);
++					goto warning;
++				}
++
++				map = mmap(NULL, size, PROT_WRITE|PROT_READ , MAP_SHARED, fd, map_arg.offset);
++				if (map == MAP_FAILED) {
++					perror("mmap fail:");
++					goto warning;
++				}
++				m->msp[i].s_params.mmap = map;
++			} else if (input_memory_type_ == V4L2_MEMORY_DMABUF) {
++				struct drm_prime_handle prime_arg;
++
++				prime_arg.handle =  m->mds.plane[i].sprite_import.handle;
++				prime_arg.flags = DRM_CLOEXEC;
++				ret = drmIoctl(fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &prime_arg);
++				if (ret || prime_arg.fd == -1) {
++					perror("DRM_IOCTL_PRIME_HANDLE_TO_FD fail:");
++					mdp_log("error: drmIoctl DRM_IOCTL_PRIME_HANDLE_TO_FD fail %d fd=%d \n", ret, prime_arg.fd);
++					goto warning;
++				}
++				m->msp[i].s_params.dma_fd = prime_arg.fd;
++			} else {
++				//to do
++			}
++
++			m->msp[i].rotate = m->mds.plane[i].sprite_import.rotate;
++			m->msp[i].s_params.status = BUF_DEQUEUED;
++			m->msp[i].s_params.size = size;
++			m->msp[i].s_params.v4mem = input_memory_type_;
++			m->msp[i].s_params.sel.type = input_buffer_type_;
++			m->msp[i].s_params.sel.r.left = m->mds.plane[i].sprite_import.crop_left;
++			m->msp[i].s_params.sel.r.top = m->mds.plane[i].sprite_import.crop_top;
++			m->msp[i].s_params.sel.r.width = m->mds.plane[i].sprite_import.crop_w;
++			m->msp[i].s_params.sel.r.height = m->mds.plane[i].sprite_import.crop_h;
++
++			m->msp[i].d_params.v4fmt.type = output_buffer_type_;
++			m->msp[i].d_params.v4fmt.fmt.pix_mp.width = m->mds.plane[i].sprite_import.dst_w;
++			m->msp[i].d_params.v4fmt.fmt.pix_mp.height = m->mds.plane[i].sprite_import.dst_h;
++			m->msp[i].d_params.v4fmt.fmt.pix_mp.pixelformat = output_buffer_format_;
++
++			Format2PlaneFmt(m->msp[i].d_params.v4fmt.fmt.pix_mp.pixelformat,
++					m->msp[i].d_params.v4fmt.fmt.pix_mp.width,
++					m->msp[i].d_params.v4fmt.fmt.pix_mp.height,
++					plane_fmt, &nplanes, 1);
++
++			m->msp[i].d_params.v4fmt.fmt.pix_mp.num_planes = nplanes;
++			for (j = 0; j < nplanes; ++j) {
++				m->msp[i].d_params.v4fmt.fmt.pix_mp.plane_fmt[j].sizeimage = plane_fmt[j].sizeimage;
++				m->msp[i].d_params.v4fmt.fmt.pix_mp.plane_fmt[j].bytesperline = plane_fmt[j].bytesperline;
++			}
++
++			m->msp[i].res = &m->mds.plane[i];
++			wl_list_insert(&m->mdp_list, &m->msp[i].link);
++		}
++
++		continue;
++warning:
++		m->mds.recycle_sprite(m->mds.plane[i].output, &m->mds.plane[i].sprite_import);
++		m->mds.plane[i].valid = 0;
++	}
++
++	return 0;
++}
++
++/*
++ * mdp thread to run loop. trigger by weston main thread if
++ * there have some sprite to render by mdp.
++ * update data from share_struct; then mdp process it;
++ * last copy data back to drm and send signal to main-thread.
++*/
++static void *
++mdp_worker_thread_function(void *data)
++{
++	struct mdp_renderer_ctx *m = data;
++
++	while (1) {
++		pthread_mutex_lock(&m->mds.mdp_mutex);
++
++		while (!m->mds.mdp_needed)
++			pthread_cond_wait(&m->mds.mdp_cond, &m->mds.mdp_mutex);
++
++		pthread_mutex_unlock(&m->mds.mdp_mutex);
++
++		mdp_log("%s %d begin \n", __func__, __LINE__);
++
++		mdp_send_share_to_v4l2(m);
++		ServiceDeviceTask(m);
++		/* include two step: 1. send to share from v4l2;
++		                             2. send drm from share.  */
++		mdp_send_v4l2_to_drm(m);
++
++		pthread_mutex_lock(&m->mds.mdp_mutex);
++		m->mds.mdp_needed = 0;
++		pthread_mutex_unlock(&m->mds.mdp_mutex);
++		pthread_cond_broadcast(&m->mds.mdp_cond);
++
++		mdp_log("%s %d end \n", __func__, __LINE__);
++	}
++
++	mdp_destroy(m);
++
++	return NULL;
++}
++
++static int32_t
++drm_destroy_dump_buffer(struct dma_buffer *buf)
++{
++	struct drm_mode_destroy_dumb destroy_arg;
++
++	if (!buf)
++		return 0;
++
++	if (!buf->mmap)
++		return -1;
++
++	if (output_memory_type_ == V4L2_MEMORY_USERPTR)
++		munmap(buf->mmap, buf->size);
++	else {
++		//to do
++	}
++
++	memset(&destroy_arg, 0, sizeof(destroy_arg));
++	destroy_arg.handle = buf->handle;
++	drmIoctl(buf->fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_arg);
++
++	free(buf);
++
++	return 0;
++}
++
++static int32_t
++mdp_destroy_output_buffer(struct mdp_renderer_ctx *m)
++{
++	uint32_t i, j;
++	int32_t ret;
++
++	for (i = 0; i < m->mds.nums; i++)
++	{
++		for (j = 0; j < NUM_BUFFER_PER_PLANE; j++) {
++			ret = drm_destroy_dump_buffer(m->msp[i].d_params.buf[j].buf);
++			if (ret < 0) {
++				mdp_log("error: %s fail to destroy output buffer\n", __func__);
++				return -1;
++			}
++		}
++	}
++
++	return 0;
++}
++
++static struct dma_buffer *
++drm_create_dump_buffer(int32_t fd, uint32_t width, uint32_t height)
++{
++	struct dma_buffer *buf;
++	struct drm_mode_create_dumb create_arg;
++	struct drm_mode_destroy_dumb destroy_arg;
++	struct drm_mode_map_dumb map_arg;
++	int32_t ret;
++
++	buf = zalloc(sizeof *buf);
++	if (!buf)
++		return NULL;
++
++	memset(&create_arg, 0, sizeof create_arg);
++	create_arg.bpp = 32;
++	create_arg.width = width;
++	create_arg.height = height;
++
++	ret = drmIoctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, &create_arg);
++	if (ret)
++		goto err_out1;
++
++	buf->handle = create_arg.handle;
++	buf->stride = create_arg.pitch;
++	buf->size = create_arg.size;
++	buf->fd = fd;
++	buf->width = width;
++	buf->height = height;
++	buf->bpp = create_arg.bpp;
++	buf->depth = 24;
++
++	/* USERPTR/DMABUF  case, get mmap addr to dump data or as input for enqueue */
++	if ((output_memory_type_ == V4L2_MEMORY_DMABUF) ||
++		(output_memory_type_ == V4L2_MEMORY_USERPTR)) {
++		memset(&map_arg, 0, sizeof map_arg);
++		map_arg.handle = buf->handle;
++		ret = drmIoctl(buf->fd, DRM_IOCTL_MODE_MAP_DUMB, &map_arg);
++		if (ret)
++			goto err_out2;
++
++		buf->mmap = mmap(NULL, buf->size, PROT_WRITE,
++			       MAP_SHARED, fd, map_arg.offset);
++		if (buf->mmap == MAP_FAILED)
++			goto err_out2;
++	}
++
++	if (output_memory_type_ == V4L2_MEMORY_DMABUF) {
++		struct drm_prime_handle prime_arg;
++		prime_arg.handle = create_arg.handle;
++		prime_arg.flags = DRM_CLOEXEC;
++		ret = drmIoctl(fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &prime_arg);
++		if (ret || prime_arg.fd == -1) {
++			mdp_log("error: drmIoctl DRM_IOCTL_PRIME_HANDLE_TO_FD fail %d fd=%d\n",ret, prime_arg.fd);
++			goto err_out1;
++		}
++		buf->dma_fd = prime_arg.fd;
++	} else {
++		//to do
++	}
++
++	return buf;
++
++err_out2:
++	memset(&destroy_arg, 0, sizeof(destroy_arg));
++	destroy_arg.handle = create_arg.handle;
++	drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_arg);
++err_out1:
++	free(buf);
++	return NULL;
++}
++
++static int32_t
++mdp_destroy(void *data)
++{
++	struct mdp_renderer_ctx *m =
++		(struct mdp_renderer_ctx *)(data);
++	int32_t ret;
++
++	mdp_log("%s -> start\n", __func__);
++
++	if (!m)
++		return 0;
++
++	ret = mdp_destroy_output_buffer(m);
++	if (ret < 0)
++		mdp_log("error: fail to destroy output buffer\n");
++
++	close_device(m);
++	m->base->pmds = NULL;
++	free(m);
++
++	mdp_log("%s -> end\n", __func__);
++
++	return 0;
++}
++
++//create buffer for mdp output; number buffer Index
++static int32_t
++mdp_init_number_buffer(struct mdp_renderer_ctx *m)
++{
++	uint32_t i, j;
++	uint32_t cnt_out = 0, cnt_in = 0;
++	struct dma_buffer *dbuf;
++
++	for (i = 0; i < m->mds.nums; i++)
++	{
++		for (j = 0; j < NUM_BUFFER_PER_PLANE; j++)
++		{
++			dbuf = drm_create_dump_buffer(m->mds.drmfd,
++				m->mds.plane[i].output->width, m->mds.plane[i].output->height);
++			if (!dbuf)
++				return -1;
++
++			m->msp[i].d_params.buf[j].buf = dbuf;
++			m->msp[i].d_params.buf[j].status = BUF_DEQUEUED;
++			m->msp[i].d_params.buf[j].v4mem = output_memory_type_;
++			m->msp[i].d_params.buf[j].index = cnt_out;
++			cnt_out++;
++		}
++		m->msp[i].plane_id = m->mds.plane[i].plane_id;
++		m->msp[i].s_params.index = cnt_in;
++
++		mdp_log("%s %d id[%d] dst_idx[%d %d] s_params.index[%d]\n",
++			__func__, __LINE__, m->msp[i].plane_id, m->msp[i].d_params.buf[0].index,
++			m->msp[i].d_params.buf[1].index, m->msp[i].s_params.index);
++
++		cnt_in++;
++	}
++
++	return 0;
++}
++
++WL_EXPORT int32_t
++mdp_backend_init(struct weston_compositor *ec,
++			int32_t (*drm_res_export)(struct weston_compositor *ec, struct mdp_drm_share *res))
++{
++	struct mdp_renderer_ctx *m;
++	struct v4l2_capability c;
++	const uint32_t kCapsRequired = V4L2_CAP_VIDEO_M2M_MPLANE |
++		V4L2_CAP_STREAMING;
++	int32_t ret, i;
++
++	m = zalloc(sizeof *m);
++	if (m == NULL)
++		return -1;
++
++	ec->pmds = (void *)&m->mds;
++	m->base = ec;
++	m->input_streamon = 0;
++	m->output_streamon = 0;
++	m->mds.mdp_needed = 0;
++	m->get_drm_resource = drm_res_export;
++
++	for (i = 0; i < MAX_SPRITE; i++) {
++		m->msp[i].d_params.current = NUM_BUFFER_PER_PLANE - 1;
++		wl_list_init(&m->msp[i].link);
++		m->msp[i].base = m;
++	}
++	wl_list_init(&m->mdp_list);
++	/* open device fd/name*/
++	if (-1 == open_device(m)) {
++		mdp_log("error: fail open device\n");
++		goto ERROR_EXIT;
++	}
++	/* Check capabilities. */
++	memset(&c, 0, sizeof(c));
++	ret = v4l2_ioctl(m->mdpfd, VIDIOC_QUERYCAP, &c);
++	if (ret < 0) {
++		mdp_log("error: fail VIDIOC_QUERYCAP check caps\n");
++		goto ERROR_EXIT;
++	}
++	weston_log("capability:\n"
++		"\tdriver:%s\n"
++		"\tcard:%s\n"
++		"\tbus_info:%s\n"
++		"\tversion:%u (%x)\n"
++		"\tcapabilities:%u (%x)\n"
++		"\tdevice_caps:%u (%x)\n",
++		c.driver, c.card, c.bus_info, c.version, c.version,
++		c.capabilities, c.capabilities, c.device_caps, c.device_caps);
++
++	if ((c.capabilities & kCapsRequired) != kCapsRequired) {
++		mdp_log("error: caps check failed: 0x%x, 0x%x\n", c.capabilities, kCapsRequired);
++		goto ERROR_EXIT;
++	}
++
++	ret = m->get_drm_resource(ec, &m->mds);
++	if (ret < 0) {
++		mdp_log("error: get_drm_resource %p"
++			" not work correct.\n", m->get_drm_resource);
++		goto ERROR_EXIT;
++	}
++
++	if (mdp_init_number_buffer(m) < 0)
++		goto ERROR_BUF_EXIT;
++
++	/* new a thread for mdp to process sprite transform */
++	pthread_mutex_init(&m->mds.mdp_mutex, NULL);
++	pthread_cond_init(&m->mds.mdp_cond, NULL);
++	pthread_create(&m->mds.mdp_thread, NULL, mdp_worker_thread_function, m);
++
++	ec->mdp_destroy = mdp_destroy;
++	ec->mdp_ctx = m;
++
++	return 0;
++
++ERROR_BUF_EXIT:
++	weston_log("%s init buffer fail\n", __func__);
++	mdp_destroy_output_buffer(m);
++
++ERROR_EXIT:
++	weston_log("%s fail\n", __func__);
++	close_device(m);
++	ec->pmds = NULL;
++	free(m);
++
++	return -1;
++}
++
+-- 
+1.9.1
+

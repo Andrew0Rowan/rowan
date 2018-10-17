@@ -1,0 +1,56 @@
+
+python() {
+  bb.warn("====Start")
+  bb.warn("B=%s" % d.getVar('B', True))
+  bb.warn("S=%s" % d.getVar('S', True))
+  bb.warn("D=%s" % d.getVar('D', True))
+  bb.warn("CC=%s" % d.getVar('CC', True))
+
+  bb.warn("bindir=%s" % d.getVar('bindir', True))
+  bb.warn("libdir=%s" % d.getVar('libdir', True))
+  bb.warn("sbindir=%s" % d.getVar('sbindir', True))
+  bb.warn("includedir=%s" % d.getVar('includedir', True))
+  bb.warn("sysconfdir=%s " % d.getVar('sysconfdir', True))
+  bb.warn("datadir=%s " % d.getVar('datadir', True))
+  bb.warn("base_bindir=%s" % d.getVar('base_bindir', True))
+  bb.warn("base_libdir=%s " % d.getVar('base_libdir', True))
+  bb.warn("base_sbindir=%s " % d.getVar('base_sbindir', True))
+  bb.warn("base_includedir=%s " % d.getVar('base_includedir', True))
+  bb.warn("systemd_unitdir=%s " % d.getVar('systemd_unitdir', True))
+
+
+  bb.warn("STAGING_INCDIR=%s" % d.getVar('STAGING_INCDIR', True))
+  bb.warn("STAGING_LIBDIR=%s" % d.getVar('STAGING_LIBDIR', True))
+  bb.warn("STAGING_DIR=%s " % d.getVar('STAGING_DIR', True))
+  bb.warn("STAGING_DIR_HOST=%s " % d.getVar('STAGING_DIR_HOST', True) )
+
+  bb.warn("WORKDIR=%s" % d.getVar('WORKDIR', True))
+  bb.warn("WORKSPACE=%s " % d.getVar('WORKSPACE', True))
+  bb.warn("TOPDIR=%s " % d.getVar('TOPDIR', True))
+  bb.warn("MTK_SRC=%s " % d.getVar('MTK_SRC', True))
+
+  bb.warn("COMMON_LICENSE_DIR=%s" % d.getVar('COMMON_LICENSE_DIR', True))
+  bb.warn("TARGET_PREFIX=%s " % d.getVar('TARGET_PREFIX', True))
+  bb.warn("DISTRO_FEATURES=%s " % d.getVar('DISTRO_FEATURES', True))
+  bb.warn("BPN=%s " % d.getVar('BPN', True))
+  bb.warn("PN=%s " % d.getVar('PN', True))
+  bb.warn("FILE=%s " % d.getVar('FILE', d))
+  bb.warn("PACKAGES=%s " % d.getVar('PACKAGES', d))
+  bb.warn("FILES_PN=%s " % d.getVar('FILES_${PN}', d))
+
+  bb.warn("ARMPKGARCH=%s" % d.getVar('ARMPKGARCH', True))
+  bb.warn("TUNE_FEATURES=%s" % d.getVar('TUNE_FEATURES', True))
+  bb.warn("PACKAGE_EXTRA_ARCHS =%s" % d.getVar('PACKAGE_EXTRA_ARCHS', True))
+  bb.warn("TUNE_PKGARCH=%s" % d.getVar('TUNE_PKGARCH', True))
+  bb.warn("PACKAGE_ARCHS=%s" % d.getVar('PACKAGE_ARCHS', True))
+  bb.warn("PACKAGE_ARCH=%s" % d.getVar('PACKAGE_ARCH', True))
+  bb.warn("TUNEABI=%s" % d.getVar('TUNEABI', True))
+  bb.warn("TARGET_FPU=%s" % d.getVar('TARGET_FPU', True))
+  bb.warn("TARGET_ARCH=%s" % d.getVar('TARGET_ARCH', True))
+  bb.warn("TARGET_CC_ARCH=%s" % d.getVar('TARGET_CC_ARCH', True))
+  bb.warn("TARGET_CC_KERNEL_ARCH=%s" % d.getVar('TARGET_CC_KERNEL_ARCH', True))
+  bb.warn("MACHINE=%s" % d.getVar('MACHINE', True))
+  bb.warn("MACHINE_ARCH=%s" % d.getVar('MACHINE_ARCH', True))
+
+  bb.warn("====End")
+}

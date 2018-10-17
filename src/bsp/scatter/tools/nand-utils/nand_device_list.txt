@@ -1,0 +1,6 @@
+Attention: use SPACE to input next parameter
+name vendor totalsize(MB) pagesize(B) sparesize(B) pageperblock cycle eccstrength interface acccon acccon1 dqsdlymux dqsdlyctrl nfidlyctrl pptableenable lbasize fastclock usedma fdmsize fdmeccsize strobesel
+F59D4G81A-45TG-18V ESMT 512 2048 64 64 5 4 1 0x10400111 0 0 0 0 0 0 0 0 8 1 0
+MT29F4G08ABAEAWP MCN 512 4096 224 64 5 16 1 0x10400111 0 0 0 0 0 0 0 0 8 1 0
+TH58TFG8DDLAB4C TSB 4096 16384 1280 256 5 40 2 0x22005010 0x01010200 0 0 0 1 0 0 0 8 1 0
+MT29F16G08ADBCA MCN 2048 4096 224 64 5 24 1 0x10400000 0 0 0 0 0 0 0 1 8 1 0

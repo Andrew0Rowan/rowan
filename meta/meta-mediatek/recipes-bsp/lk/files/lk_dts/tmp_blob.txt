@@ -1,0 +1,7 @@
+#define CHECK_RSA 0
+#define CHECK_HASH 0
+
+const unsigned char blob[] = 
+{
+0
+};

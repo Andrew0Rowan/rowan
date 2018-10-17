@@ -1,0 +1,62 @@
+From e68f82dd70879cb98e9fdd648c3c048205ad179c Mon Sep 17 00:00:00 2001
+From: Jia Rong <jia.rong@mediatek.com>
+Date: Fri, 3 Mar 2017 10:35:46 +0800
+Subject: [PATCH 3/4] subsurface: update subsurface opacity with mainsurface
+
+REBASED
+update subsurface opacity with mainsurface.
+Test: OK
+
+Change-Id: Idf70f06b301a3757e102fd2851c8f557bf56d5dd
+Signed-off-by: Jia Rong <jia.rong@mediatek.com>
+CR-Id: AUTO00000252
+---
+ ivi-shell/ivi-layout.c | 13 +++++++++++++
+ src/compositor.c       |  1 +
+ 2 files changed, 14 insertions(+)
+
+diff --git a/ivi-shell/ivi-layout.c b/ivi-shell/ivi-layout.c
+index 7fa8b33..54cc0a7 100644
+--- a/ivi-shell/ivi-layout.c
++++ b/ivi-shell/ivi-layout.c
+@@ -260,12 +260,25 @@ update_opacity(struct ivi_layout_layer *ivilayer,
+ 	       struct ivi_layout_surface *ivisurf)
+ {
+ 	struct weston_view *tmpview = NULL;
++	struct weston_view *view = NULL;
++	struct weston_subsurface *sub = NULL;
+ 	double layer_alpha = wl_fixed_to_double(ivilayer->prop.opacity);
+ 	double surf_alpha  = wl_fixed_to_double(ivisurf->prop.opacity);
+ 
+ 	tmpview = get_weston_view(ivisurf);
+ 	assert(tmpview != NULL);
++
+ 	tmpview->alpha = layer_alpha * surf_alpha;
++
++	wl_list_for_each(sub, &ivisurf->surface->subsurface_list, parent_link) {
++		if (sub->surface == ivisurf->surface)
++			continue;
++
++		if(!wl_list_empty(&sub->surface->views)) {
++			view = wl_container_of(sub->surface->views.next, view, surface_link);
++			view->alpha = tmpview->alpha;
++		}
++	}
+ }
+ 
+ static void
+diff --git a/src/compositor.c b/src/compositor.c
+index 91e3b6a..dbb2e9e 100644
+--- a/src/compositor.c
++++ b/src/compositor.c
+@@ -2255,6 +2255,7 @@ view_list_add_subsurface_view(struct weston_compositor *compositor,
+ 	}
+ 
+ 	view->parent_view = parent;
++	view->alpha = parent->alpha;
+ 	weston_view_update_transform(view);
+ 
+ 	if (wl_list_empty(&sub->surface->subsurface_list)) {
+-- 
+1.9.1
+

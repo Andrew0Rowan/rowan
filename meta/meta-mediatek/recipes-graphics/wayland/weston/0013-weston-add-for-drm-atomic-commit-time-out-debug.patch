@@ -1,0 +1,133 @@
+From 62f7a82ee4e84e75278205e9999ffc2b92c5ac8c Mon Sep 17 00:00:00 2001
+From: Jia Rong <jia.rong@mediatek.com>
+Date: Mon, 27 Mar 2017 14:13:48 +0800
+Subject: [PATCH 13/19] weston: add for drm atomic commit time out debug
+
+add for drm atomic commit time out debug
+Test: OK
+
+Change-Id: Iaea1c5160d775abb0e667ae5701347e103c2a19d
+Signed-off-by: Jia Rong <jia.rong@mediatek.com>
+CR-Id: AUTO00000252
+---
+ src/compositor-drm.c | 53 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 53 insertions(+)
+
+diff --git a/src/compositor-drm.c b/src/compositor-drm.c
+index 41fdeba..12a16ff 100644
+--- a/src/compositor-drm.c
++++ b/src/compositor-drm.c
+@@ -359,8 +359,11 @@ struct drm_output {
+ 	struct wl_listener recorder_frame_listener;
+ 
+ 	struct wl_list plane_flip_list; /* drm_plane::flip_link */
++	struct wl_event_source *commit_timer;
+ };
+ 
++static int commit_time = 32;
++
+ static struct gl_renderer_interface *gl_renderer;
+ 
+ static const char default_seat[] = "seat0";
+@@ -881,6 +884,20 @@ drm_connector_update_success(struct drm_output *output)
+ }
+ 
+ static int
++drm_commit_timeout_handler(void *data)
++{
++	struct drm_output *output = (struct drm_output *) data;
++
++	/* DRM driver is not responding */
++	weston_log("DRM atomic commit timeout for output %s (%dx%d) \n",
++		   output->base.name,
++		   output->base.current_mode->width,
++		   output->base.current_mode->height);
++
++	return 1;
++}
++
++static int
+ atomic_plane_add(drmModeAtomicReq *req, struct drm_plane *plane,
+ 		 enum wdrm_plane_property prop, uint64_t value)
+ {
+@@ -1783,6 +1800,7 @@ drm_output_repaint_atomic(struct weston_output *output_base,
+ 	struct drm_output *output = (struct drm_output *) output_base;
+ 	struct drm_backend *backend =
+ 		(struct drm_backend *)output->base.compositor->backend;
++	struct wl_event_loop *loop;
+ 	struct drm_plane *plane, *plane_tmp;
+ 	drmModeAtomicReq *req;
+ 	uint32_t flags;
+@@ -1880,6 +1898,20 @@ drm_output_repaint_atomic(struct weston_output *output_base,
+ 	}
+ 	drmModeAtomicFree(req);
+ 
++	loop = wl_display_get_event_loop(backend->compositor->wl_display);
++	if (output->commit_timer == NULL)
++		output->commit_timer =
++			wl_event_loop_add_timer(loop,
++						drm_commit_timeout_handler, output);
++	if (output->commit_timer == NULL) {
++		weston_log("DRM commit timer create failed for output %s (%dx%d) \n",
++			   output->base.name,
++			   output->base.current_mode->width,
++			   output->base.current_mode->height);
++	} else {
++		wl_event_source_timer_update(output->commit_timer, commit_time);
++	}
++
+ 	if (!output->primary_plane->current) {
+ 		drm_crtc_update_success(output);
+ 		drm_connector_update_success(output);
+@@ -2015,6 +2047,7 @@ drm_output_start_repaint_loop(struct weston_output *output_base)
+ 	struct drm_output *output = (struct drm_output *) output_base;
+ 	struct drm_backend *b = (struct drm_backend *)
+ 		output_base->compositor->backend;
++	struct wl_event_loop *loop;
+ 	uint32_t fb_id;
+ 	struct timespec ts;
+ 	int ret;
+@@ -2061,6 +2094,20 @@ drm_output_start_repaint_loop(struct weston_output *output_base)
+ 			goto finish_frame;
+ 		}
+ 
++		loop = wl_display_get_event_loop(b->compositor->wl_display);
++		if (output->commit_timer == NULL)
++			output->commit_timer =
++				wl_event_loop_add_timer(loop,
++							drm_commit_timeout_handler, output);
++		if (output->commit_timer == NULL) {
++			weston_log("DRM commit timer create failed for output %s (%dx%d) \n",
++				   output->base.name,
++				   output->base.current_mode->width,
++				   output->base.current_mode->height);
++		} else {
++			wl_event_source_timer_update(output->commit_timer, commit_time);
++		}
++
+ 		output->dpms = WESTON_DPMS_ON;
+ 		wl_list_insert(&output->plane_flip_list,
+ 			       &output->primary_plane->flip_link);
+@@ -2132,6 +2179,9 @@ page_flip_handler(int fd, unsigned int frame,
+ 			 WP_PRESENTATION_FEEDBACK_KIND_HW_COMPLETION |
+ 			 WP_PRESENTATION_FEEDBACK_KIND_HW_CLOCK;
+ 
++	if (output->commit_timer != NULL)
++		wl_event_source_timer_update(output->commit_timer, 0);
++
+ 	drm_output_update_msc(output, frame);
+ 
+ 	wl_list_for_each_safe(plane, plane_tmp,
+@@ -2871,6 +2921,9 @@ drm_output_destroy(struct weston_output *output_base)
+ 	drmModeCrtcPtr origcrtc = output->ddp_crtc.original_crtc;
+ 	int i;
+ 
++	if (output->commit_timer)
++		wl_event_source_remove(output->commit_timer);
++
+ 	if (output->page_flip_pending) {
+ 		output->destroy_pending = 1;
+ 		weston_log("destroy output while page flip pending\n");
+-- 
+1.9.1
+

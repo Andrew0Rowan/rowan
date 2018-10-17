@@ -1,0 +1,11 @@
+INCLUDE_DIRECTORIES(../inc)
+
+AUX_SOURCE_DIRECTORY(. LED)
+
+IF(${ADAPTOR_SOURCE_ADD} MATCHES 1)
+	message("ADAPTOR_SOURCE_ADD is defined in led")
+  list(APPEND LED 
+			${ADAPTOR_APP_CTRL_SOURCE}/led/app_ctrl_led.c)
+ENDIF()
+
+ADD_LIBRARY(led fl3236_led  ${LED})

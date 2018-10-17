@@ -1,0 +1,29 @@
+From 0397e504fe18c73f28518493fa7e91d6f3b5b6c0 Mon Sep 17 00:00:00 2001
+From: Changtao Hu <changtao.hu@mediatek.com>
+Date: Mon, 6 Nov 2017 11:48:07 +0800
+Subject: [PATCH] v4l2 enc: fix crash
+
+fix crash when ctrl+c
+Test: OK
+
+Signed-off-by: Changtao Hu <changtao.hu@mediatek.com>
+CR-Id: AUTO00011444
+---
+ sys/v4l2/gstv4l2videoenc.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/sys/v4l2/gstv4l2videoenc.c b/sys/v4l2/gstv4l2videoenc.c
+index e8bb146..31714be 100644
+--- a/sys/v4l2/gstv4l2videoenc.c
++++ b/sys/v4l2/gstv4l2videoenc.c
+@@ -822,6 +822,7 @@ gst_v4l2_video_enc_change_state (GstElement * element,
+     g_atomic_int_set (&self->active, FALSE);
+     gst_v4l2_object_unlock (self->v4l2output);
+     gst_v4l2_object_unlock (self->v4l2capture);
++    gst_v4l2_video_enc_loop_stopped (self);
+     gst_pad_stop_task (encoder->srcpad);
+   }
+ 
+-- 
+1.9.1
+

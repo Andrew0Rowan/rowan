@@ -1,0 +1,86 @@
+From 64e35fd445350d57bdb75f0431f08dbb849cdc69 Mon Sep 17 00:00:00 2001
+From: Ricky Zhang <ricky.zhang@mediatek.com>
+Date: Mon, 24 Jul 2017 14:14:49 +0800
+Subject: [PATCH] v4l2: add get camera link number feature
+
+add get camera link number feature to calculate min buffers
+Test: test ok
+
+Signed-off-by: Ricky Zhang <ricky.zhang@mediatek.com>
+CR-Id: AUTO00000556
+---
+ sys/v4l2/gstv4l2object.c | 27 +++++++++++++++++++++++++--
+ sys/v4l2/gstv4l2object.h |  1 +
+ 2 files changed, 26 insertions(+), 2 deletions(-)
+
+diff --git a/sys/v4l2/gstv4l2object.c b/sys/v4l2/gstv4l2object.c
+index 596f14c..82785e3 100644
+--- a/sys/v4l2/gstv4l2object.c
++++ b/sys/v4l2/gstv4l2object.c
+@@ -758,7 +758,23 @@ gst_v4l2_get_driver_min_buffers (GstV4l2Object * v4l2object)
+         "driver requires a minimum of %d buffers", control.value);
+     v4l2object->min_buffers = control.value;
+   } else {
+-    v4l2object->min_buffers = 0;
++    struct v4l2_streamparm streamparm;
++    guint link = 0;
++
++    memset (&streamparm, 0x00, sizeof (struct v4l2_streamparm));
++    streamparm.type = v4l2object->type;
++
++    if (v4l2_ioctl (v4l2object->video_fd, VIDIOC_G_PARM, &streamparm) >= 0) {
++	link = streamparm.parm.capture.reserved[0];
++	v4l2object->link = v4l2object->link > 0 ? v4l2object->link : link;
++	v4l2object->min_buffers = link * 2;
++
++        GST_DEBUG_OBJECT (v4l2object->element,
++          "%d camera linked. set min_buffers to %d", link, v4l2object->min_buffers);
++    } else {
++      GST_DEBUG_OBJECT (v4l2object->element, "set min_buffers to 0");
++	    v4l2object->min_buffers = 0;
++    }
+   }
+ }
+ 
+@@ -3317,6 +3333,7 @@ gst_v4l2_object_set_format_full (GstV4l2Object * v4l2object, GstCaps * caps,
+   GST_VIDEO_INFO_FPS_N (&info) =
+       streamparm.parm.capture.timeperframe.denominator;
+   GST_VIDEO_INFO_FPS_D (&info) = streamparm.parm.capture.timeperframe.numerator;
++  v4l2object->link =  streamparm.parm.capture.reserved[0];
+ 
+   if (v4l2object->type == V4L2_BUF_TYPE_VIDEO_CAPTURE
+       || v4l2object->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+@@ -4308,11 +4325,17 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
+      * driver and 1 more, so we don't endup up with everything downstream or
+      * held by the decoder. */
+     own_min = min + obj->min_buffers + 1;
++    if (obj->link) {
++       own_min = obj->min_buffers + obj->link;
++       GST_DEBUG_OBJECT (obj->element, "own_min = %d link=%d", own_min, obj->link);
++    }
+ 
+     /* If no allocation parameters where provided, allow for a little more
+      * buffers and enable copy threshold */
+     if (!update) {
+-      own_min += 3;
++      if (obj->link <= 1) {
++        own_min += 3;
++      }
+       gst_v4l2_buffer_pool_copy_at_threshold (GST_V4L2_BUFFER_POOL (pool),
+           TRUE);
+     } else {
+diff --git a/sys/v4l2/gstv4l2object.h b/sys/v4l2/gstv4l2object.h
+index bf57189..6c1252f 100644
+--- a/sys/v4l2/gstv4l2object.h
++++ b/sys/v4l2/gstv4l2object.h
+@@ -155,6 +155,7 @@ struct _GstV4l2Object {
+   GstStructure *extra_controls;
+   gboolean keep_aspect;
+   GValue *par;
++  guint link;
+ 
+   /* X-overlay */
+   GstV4l2Xv *xv;
+-- 
+1.9.1
+

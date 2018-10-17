@@ -1,0 +1,11 @@
+[Unit]
+Description=66xx launcher Daemon
+After=wmtd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/6620_launcher -p /lib/firmware
+
+[Install]
+Alias=launcherd
+WantedBy=multi-user.target

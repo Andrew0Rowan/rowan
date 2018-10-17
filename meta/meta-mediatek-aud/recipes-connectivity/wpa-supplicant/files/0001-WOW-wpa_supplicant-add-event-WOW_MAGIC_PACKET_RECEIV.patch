@@ -1,0 +1,94 @@
+From 60094f16b7ebbad1a62891e7c34ea81882f54e4a Mon Sep 17 00:00:00 2001
+From: Yaohan Liao <yaohan.liao@mediatek.com>
+Date: Tue, 29 Aug 2017 19:29:33 +0800
+Subject: [PATCH] <WOW>: wpa_supplicant add event "WOW_MAGIC_PACKET_RECEIVED"
+ for WOW
+
+APP needs to get WOW infomation when system wakeup via WOW.
+wpa_supplicant adds event "WOW_MAGIC_PACKET_RECEIVED" to notify upper layer of WOW infomation.
+Test: build pass
+
+Signed-off-by: Yaohan Liao <yaohan.liao@mediatek.com>
+CR-Id: AUTO00006786
+---
+ src/common/qca-vendor.h            | 13 +++++++++++++
+ src/drivers/driver_nl80211_event.c | 19 +++++++++++++++++++
+ 2 files changed, 32 insertions(+)
+ mode change 100644 => 100755 src/common/qca-vendor.h
+ mode change 100644 => 100755 src/drivers/driver_nl80211_event.c
+
+diff --git a/src/common/qca-vendor.h b/src/common/qca-vendor.h
+old mode 100644
+new mode 100755
+index 28985f5..d507716
+--- a/src/common/qca-vendor.h
++++ b/src/common/qca-vendor.h
+@@ -17,6 +17,7 @@
+  */
+ 
+ #define OUI_QCA 0x001374
++#define OUI_GOOGLE 0x001A11
+ 
+ /**
+  * enum qca_radiotap_vendor_ids - QCA radiotap vendor namespace IDs
+@@ -158,6 +159,18 @@ enum qca_nl80211_vendor_subcmds {
+ 	QCA_NL80211_VENDOR_SUBCMD_SETBAND = 105,
+ };
+ 
++enum google_nl80211_vendor_subcmds{
++	GOOGLE_NL80211_VENDOR_SUBCMD_GSCAN_EVENT_SIGNIFICANT_CHANGE_RESULTS,
++	GOOGLE_NL80211_VENDOR_SUBCMD_GSCAN_EVENT_HOTLIST_RESULTS_FOUND,
++	GOOGLE_NL80211_VENDOR_SUBCMD_GSCAN_EVENT_SCAN_RESULTS_AVAILABLE,
++	GOOGLE_NL80211_VENDOR_SUBCMD_GSCAN_EVENT_FULL_SCAN_RESULTS,
++	GOOGLE_NL80211_VENDOR_SUBCMD_RTT_EVENT_COMPLETE,
++	GOOGLE_NL80211_VENDOR_SUBCMD_GSCAN_EVENT_COMPLETE_SCAN,
++	GOOGLE_NL80211_VENDOR_SUBCMD_GSCAN_EVENT_HOTLIST_RESULTS_LOST,
++	GOOGLE_NL80211_VENDOR_SUBCMD_WIFI_EVENT_RSSI_MONITOR,
++	GOOGLE_NL80211_VENDOR_SUBCMD_MAGIC_PACKET_RECEIVED = 8
++
++};
+ 
+ enum qca_wlan_vendor_attr {
+ 	QCA_WLAN_VENDOR_ATTR_INVALID = 0,
+diff --git a/src/drivers/driver_nl80211_event.c b/src/drivers/driver_nl80211_event.c
+old mode 100644
+new mode 100755
+index 7b0f721..1e3d9df
+--- a/src/drivers/driver_nl80211_event.c
++++ b/src/drivers/driver_nl80211_event.c
+@@ -1718,6 +1718,22 @@ static void nl80211_vendor_event_qca(struct wpa_driver_nl80211_data *drv,
+ }
+ 
+ 
++static void nl80211_vendor_event_google(struct wpa_driver_nl80211_data *drv,
++				     u32 subcmd, u8 *data, size_t len)
++{
++	switch (subcmd) {
++	case GOOGLE_NL80211_VENDOR_SUBCMD_MAGIC_PACKET_RECEIVED:
++		wpa_msg(drv->ctx, MSG_INFO, "WOW_MAGIC_PACKET_RECEIVED ");
++		break;
++	default:
++		wpa_printf(MSG_DEBUG,
++			   "nl80211: Ignore unsupported Google vendor event %u",
++			   subcmd);
++		break;
++	}
++}
++
++
+ static void nl80211_vendor_event(struct wpa_driver_nl80211_data *drv,
+ 				 struct nlattr **tb)
+ {
+@@ -1756,6 +1772,9 @@ static void nl80211_vendor_event(struct wpa_driver_nl80211_data *drv,
+ 	case OUI_QCA:
+ 		nl80211_vendor_event_qca(drv, subcmd, data, len);
+ 		break;
++	case OUI_GOOGLE:
++		nl80211_vendor_event_google(drv, subcmd, data, len);
++		break;
+ 	default:
+ 		wpa_printf(MSG_DEBUG, "nl80211: Ignore unsupported vendor event");
+ 		break;
+-- 
+1.9.1
+

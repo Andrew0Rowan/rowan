@@ -1,0 +1,96 @@
+From 69e15e02891fcd4ce00e6f64a36e79060766e4d9 Mon Sep 17 00:00:00 2001
+From: Jizhou Deng <jizhou.deng@mediatek.com>
+Date: Fri, 24 Nov 2017 16:56:36 +0800
+Subject: [PATCH] mdns compile adapter
+
+---
+ Clients/Makefile            | 4 ++--
+ mDNSPosix/Makefile          | 9 +++++----
+ mDNSShared/dnsextd_parser.y | 6 +++---
+ 3 files changed, 10 insertions(+), 9 deletions(-)
+
+diff --git a/Clients/Makefile b/Clients/Makefile
+index ce0b5f0..1f13fc9 100755
+--- a/Clients/Makefile
++++ b/Clients/Makefile
+@@ -42,10 +42,10 @@ build:
+ 	mkdir build
+ 
+ build/dns-sd: build dns-sd.c ClientCommon.c
+-	cc $(filter %.c %.o, $+) $(LIBS) -I../mDNSShared -Wall -o $@
++	$(CC) $(filter %.c %.o, $+) $(LIBS) -I../mDNSShared -Wall -o $@
+ 
+ build/dns-sd64: build dns-sd.c ClientCommon.c
+-	cc $(filter %.c %.o, $+) $(LIBS) -I../mDNSShared -Wall -o $@ -m64
++	$(CC) $(filter %.c %.o, $+) $(LIBS) -I../mDNSShared -Wall -o $@ -m64
+ 
+ # Note, we can make a 'fat' version of dns-sd using 'lipo', as shown below, but we
+ # don't, because we don't want or need a 'fat' version of dns-sd, because it will
+diff --git a/mDNSPosix/Makefile b/mDNSPosix/Makefile
+index 55d7f8d..2091677 100755
+--- a/mDNSPosix/Makefile
++++ b/mDNSPosix/Makefile
+@@ -54,10 +54,10 @@ COREDIR = ../mDNSCore
+ SHAREDDIR ?= ../mDNSShared
+ JDK = /usr/jdk
+ 
+-CC = @cc
++#CC = @cc
+ BISON = @bison
+ FLEX = @flex
+-LD = ld -shared
++#LD = ld -shared
+ CP = cp
+ RM = rm
+ LN = ln -s -f
+@@ -82,7 +82,7 @@ else
+ CFLAGS_DEBUG = -Os -DMDNS_DEBUGMSGS=0 
+ OBJDIR ?= objects/prod
+ BUILDDIR ?= build/prod
+-STRIP = strip -S 
++#STRIP = $(CC)strip -x
+ endif
+ 
+ # Configure per-OS peculiarities
+@@ -101,8 +101,9 @@ else
+ 
+ # any target that contains the string "linux"
+ ifeq ($(findstring linux,$(os)),linux)
++#CC = $(CROSS_COMPILE)gcc
+ CFLAGS_OS = -D_GNU_SOURCE -DHAVE_IPV6 -DNOT_HAVE_SA_LEN -DUSES_NETLINK -DHAVE_LINUX -DTARGET_OS_LINUX -fno-strict-aliasing
+-LD = gcc -shared
++LD = $(CC) -shared
+ FLEXFLAGS_OS = -l
+ JAVACFLAGS_OS += -I$(JDK)/include/linux
+ 
+diff --git a/mDNSShared/dnsextd_parser.y b/mDNSShared/dnsextd_parser.y
+index 18c5990..9e2da4b 100644
+--- a/mDNSShared/dnsextd_parser.y
++++ b/mDNSShared/dnsextd_parser.y
+@@ -185,12 +185,12 @@ optionsstatement:
+ 		|
+ 		PRIVATE PORT NUMBER
+ 		{
+-			( ( DaemonInfo* ) context )->private_port = mDNSOpaque16fromIntVal( $3 );
++			//( ( DaemonInfo* ) context )->private_port = mDNSOpaque16fromIntVal( $3 );
+ 		}
+ 		|
+ 		LLQ PORT NUMBER
+ 		{
+-			( ( DaemonInfo* ) context )->llq_port = mDNSOpaque16fromIntVal( $3 );
++			//( ( DaemonInfo* ) context )->llq_port = mDNSOpaque16fromIntVal( $3 );
+ 		}
+ 		;
+ 
+@@ -445,7 +445,7 @@ ParseConfig
+ 	yyin = fopen( file, "r" );
+ 	require_action( yyin, exit, err = 0 );
+ 
+-	err = yyparse( ( void* ) d );
++	err = yyparse( );//( void* ) d 
+ 	require_action( !err, exit, err = 1 );
+ 
+ 	for ( zoneSpec = g_zones; zoneSpec; zoneSpec = zoneSpec->next )
+-- 
+1.9.1
+

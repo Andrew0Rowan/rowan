@@ -1,0 +1,56 @@
+From 368691c899382c0d3f5e9538207d78c807717496 Mon Sep 17 00:00:00 2001
+From: Changtao Hu <changtao.hu@mediatek.com>
+Date: Thu, 22 Jun 2017 11:15:38 +0800
+Subject: [PATCH] gstreamer upgrade: update MT21 block mode in videoinfo
+
+Make patch for gstreamer upgrade
+Test: OK
+
+Signed-off-by: Changtao Hu <changtao.hu@mediatek.com>
+CR-Id: AUTO00005189
+---
+ gst-libs/gst/video/video-format.c | 2 ++
+ gst-libs/gst/video/video-format.h | 1 +
+ gst-libs/gst/video/video-info.c   | 1 +
+ 3 files changed, 4 insertions(+)
+
+diff --git a/gst-libs/gst/video/video-format.c b/gst-libs/gst/video/video-format.c
+index cff8189..3220106 100644
+--- a/gst-libs/gst/video/video-format.c
++++ b/gst-libs/gst/video/video-format.c
+@@ -3574,6 +3574,8 @@ static const VideoFormat formats[] = {
+       PSTR2222, PLANE0123, OFFS0, SUB4444, PACK_A444_10LE),
+   MAKE_YUV_FORMAT (NV61, "raw video", GST_MAKE_FOURCC ('N', 'V', '6', '1'),
+       DPTH888, PSTR122, PLANE011, OFFS010, SUB422, PACK_NV61),
++  MAKE_YUV_FORMAT (MT21, "raw video", GST_MAKE_FOURCC ('M', 'T', '2', '1'),
++      DPTH888, PSTR122, PLANE011, OFFS001, SUB420, PACK_NV12),
+ };
+ 
+ static GstVideoFormat
+diff --git a/gst-libs/gst/video/video-format.h b/gst-libs/gst/video/video-format.h
+index 86fe297..a2fd840 100644
+--- a/gst-libs/gst/video/video-format.h
++++ b/gst-libs/gst/video/video-format.h
+@@ -158,6 +158,7 @@ typedef enum {
+   GST_VIDEO_FORMAT_A444_10BE,
+   GST_VIDEO_FORMAT_A444_10LE,
+   GST_VIDEO_FORMAT_NV61,
++  GST_VIDEO_FORMAT_MT21,
+ } GstVideoFormat;
+ 
+ #define GST_VIDEO_MAX_PLANES 4
+diff --git a/gst-libs/gst/video/video-info.c b/gst-libs/gst/video/video-info.c
+index cb9c777..366636e 100644
+--- a/gst-libs/gst/video/video-info.c
++++ b/gst-libs/gst/video/video-info.c
+@@ -738,6 +738,7 @@ fill_planes (GstVideoInfo * info)
+       break;
+     case GST_VIDEO_FORMAT_NV12:
+     case GST_VIDEO_FORMAT_NV21:
++    case GST_VIDEO_FORMAT_MT21:
+       info->stride[0] = GST_ROUND_UP_4 (width);
+       info->stride[1] = info->stride[0];
+       info->offset[0] = 0;
+-- 
+1.9.1
+

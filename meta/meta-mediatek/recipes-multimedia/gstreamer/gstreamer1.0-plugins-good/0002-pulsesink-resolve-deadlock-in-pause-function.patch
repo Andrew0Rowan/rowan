@@ -1,0 +1,43 @@
+From af7fb53b379027a51a8818f40e9b80bcdde8ef04 Mon Sep 17 00:00:00 2001
+From: Chuanbing Xiang <chuanbing.xiang@mediatek.com>
+Date: Wed, 23 Nov 2016 09:35:50 +0800
+Subject: [PATCH] pulsesink: resolve deadlock in pause function
+
+gst_pulseringbuffer_commit() and gst_pulseringbuffer_pause() function
+wait the same signal, if commit function wait signal before pause(),
+commit function will occupy the signal and mutex of pause() function,
+it will lead to pause() function wait forever.
+So We send signal before pause() wait.
+Test: PASS
+
+Change-Id: Ib067dc9b0255d4c0aa12427d1c3ed843386251a6
+Signed-off-by: Chuanbing Xiang <chuanbing.xiang@mediatek.com>
+CR-Id: AUTO00001991
+---
+ ext/pulse/pulsesink.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+ mode change 100644 => 100755 ext/pulse/pulsesink.c
+
+diff --git a/ext/pulse/pulsesink.c b/ext/pulse/pulsesink.c
+old mode 100644
+new mode 100755
+index f7685f7..cb12142
+--- a/ext/pulse/pulsesink.c
++++ b/ext/pulse/pulsesink.c
+@@ -1265,6 +1265,13 @@ gst_pulseringbuffer_pause (GstAudioRingBuffer * buf)
+   GST_DEBUG_OBJECT (psink, "pausing and corking");
+   /* make sure the commit method stops writing */
+   pbuf->paused = TRUE;
++
++  if (pbuf->in_commit) {
++    /* we are waiting in a commit, signal */
++    GST_DEBUG_OBJECT (psink, "signal commit before pause");
++    pa_threaded_mainloop_signal (mainloop, 0);
++  }
++
+   res = gst_pulsering_set_corked (pbuf, TRUE, TRUE);
+   if (pbuf->in_commit) {
+     /* we are waiting in a commit, signal */
+-- 
+1.9.1
+

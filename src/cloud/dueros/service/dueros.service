@@ -1,0 +1,13 @@
+[Unit]
+Description=DuerOS
+After=launcher_6627.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /usr/bin/dueros/dueros.sh >ttyS0
+StandardOutput=tty
+StandardError=tty
+
+[Install]
+Alias=dueros
+WantedBy=multi-user.target

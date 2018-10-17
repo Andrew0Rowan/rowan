@@ -1,0 +1,34 @@
+[build]
+TARGETNAME = network
+TARGETTYPE = library
+
+SOURCES = \
+          c_mt_net_cfg.c
+
+DIRS =    \
+
+
+CCFLAGS += \ 
+           -fno-strict-aliasing \
+
+[build_linux_prog]
+TARGETNAME = 
+TARGETTYPE = 
+
+SOURCES = \
+          c_mt_lx_net_cfg.c \
+          c_mt_lx_net_cli.c \
+          x_lx_net.c \
+          c_mt_lx_net_wrapper.c \
+
+DIRS =    \
+          netinfd \
+          ../ave_tcp/http_cli \          
+
+CCFLAGS += \ 
+           -fno-strict-aliasing \
+
+INCLUDES += \            
+            ./netinfd \           
+            ../../../../ln_bdp_linux/build/sysroot/usr/include \
+            

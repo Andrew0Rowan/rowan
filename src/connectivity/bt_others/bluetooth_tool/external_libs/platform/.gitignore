@@ -1,0 +1,12 @@
+libasound.so
+libz.so
+libz.so.1
+aacdecoder_lib.h
+aacenc_lib.h
+audio.h
+cmdl_parser.h
+conv_string.h
+FDK_audio.h
+genericStds.h
+machine_type.h
+wav_file.h

@@ -1,0 +1,60 @@
+From 090017efca9396a7cef0ccdc645a88c5457c63b8 Mon Sep 17 00:00:00 2001
+From: Jackie Huang <jackie.huang@windriver.com>
+Date: Wed, 29 Jun 2016 01:22:46 -0400
+Subject: [PATCH] Replace deprecated function gnutls_protocol_set_priority
+
+The function gnutls_protocol_set_priority is deprecated
+since GnuTLS >= 2.12.0 and replaced by gnutls_priority_set_direct.
+
+Reference:
+http://www.gnutls.org/manual/html_node/Upgrading-from-previous-versions.html#Upgrading-from-previous-versions
+
+Upstream-Status: Inappropriate [upstream rewrote with GPLv3]
+
+Signed-off-by: Jackie Huang <jackie.huang@windriver.com>
+---
+ src/tls.c | 20 +++++++++++++++++---
+ 1 file changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/src/tls.c b/src/tls.c
+index 10818fa..881e94b 100644
+--- a/src/tls.c
++++ b/src/tls.c
+@@ -928,7 +928,15 @@ int tls_init(tls_t *tls, const char *key_file, const char *cert_file,
+ 	const char *trust_file, int force_sslv3, char **errstr)
+ {
+ #ifdef HAVE_LIBGNUTLS
++#if GNUTLS_VERSION_MAJOR >= 2 && GNUTLS_VERSION_MINOR >= 12
++    const char *force_sslv3_str = ":-VERS-TLS-ALL:+VERS-SSL3.0";
++#else
++    const char *force_sslv3_str =
++        ":-VERS-TLS1.2:-VERS-TLS1.1:-VERS-TLS1.0:+VERS-SSL3.0";
++#endif
+     int error_code;
++    char *priorities;
++    const char *error_pos;
+     
+     if ((error_code = gnutls_init(&tls->session, GNUTLS_CLIENT)) != 0)
+     {
+@@ -945,9 +953,15 @@ int tls_init(tls_t *tls, const char *key_file, const char *cert_file,
+     }
+     if (force_sslv3)
+     {
+-	const int force_sslv3_proto_prio[2] = { GNUTLS_SSL3, 0 };
+-	if ((error_code = gnutls_protocol_set_priority(tls->session, 
+-			force_sslv3_proto_prio)) != 0)
++	priorities = xstrdup("NORMAL");
++	error_pos = NULL;
++
++	priorities = xrealloc(priorities,
++		strlen(priorities) + strlen(force_sslv3_str) + 1);
++	strcat(priorities, force_sslv3_str);
++
++	if ((error_code = gnutls_priority_set_direct(tls->session,
++			priorities, &error_pos)) != 0)
+ 	{
+ 	    *errstr = xasprintf(_("cannot force SSLv3: %s"),
+ 	    	    gnutls_strerror(error_code));
+-- 
+2.8.1
+

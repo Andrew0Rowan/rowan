@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.1 FATAL_ERROR)
+
+# Set project information
+PROJECT(Adaptor)
+
+EXECUTE_PROCESS(COMMAND sh rpm2cpio_rpm.sh ${RPMIO2CPIO} ${CMAKE_INSTALL_BASELIBDIR})
+
+INSTALL(FILES "./${CMAKE_INSTALL_LIBDIR}/libadaptor.so" DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+
+FILE(GLOB adaptor_h_file "./${CMAKE_INSTALL_INCLUDEDIR}/adaptor/*.h")
+INSTALL(FILES ${adaptor_h_file} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/adaptor")

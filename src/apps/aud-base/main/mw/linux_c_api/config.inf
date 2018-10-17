@@ -1,0 +1,4 @@
+[build_linux_prog && CONFIG_PHILIPS_WMDRM_KEY]
+build.inf:
+    INCLUDES += \
+                ../../../../custom/philips/philips_internal/inc \

@@ -1,0 +1,80 @@
+From 11cd93573680e7c4edb9b92eabd0b2b80b787677 Mon Sep 17 00:00:00 2001
+From: Xiaolei Gao <xiaolei.gao@mediatek.com>
+Date: Wed, 21 Sep 2016 17:12:42 +0800
+Subject: [PATCH] asfdemux: asfdemux push header
+
+asfdemux push header
+Test: build and run on mt2701
+
+Signed-off-by: Xiaolei Gao <xiaolei.gao@mediatek.com>
+CR-Id: AUTO00001014
+---
+ gst/asfdemux/gstasfdemux.c | 24 +++++++++++++++++++++++-
+ gst/asfdemux/gstasfdemux.h |  2 ++
+ 2 files changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/gst/asfdemux/gstasfdemux.c b/gst/asfdemux/gstasfdemux.c
+index 4bf0619..be75123 100644
+--- a/gst/asfdemux/gstasfdemux.c
++++ b/gst/asfdemux/gstasfdemux.c
+@@ -1731,6 +1731,21 @@ gst_asf_demux_push_complete_payloads (GstASFDemux * demux, gboolean force)
+               "Pushing streamheader before first buffer");
+           gst_pad_push (stream->pad, gst_buffer_ref (stream->streamheader));
+         }
++	 else {
++	   if (!demux->video_header_send_flag) {
++	      gchar *pad_name = NULL;
++
++	      pad_name = GST_PAD_NAME (stream->pad);
++	      GST_INFO_OBJECT (demux, "pad_name = %s", pad_name);
++
++	      if (!strncmp(pad_name, "video_", strlen("video_"))) {
++	        GST_INFO_OBJECT (demux, "send video header");
++	        gst_pad_push(stream->pad, demux->video_header);
++	        demux->video_header_send_flag = TRUE;
++	        demux->video_header = NULL;
++	      }
++      	   }
++	 }
+         stream->first_buffer = FALSE;
+       }
+ 
+@@ -2524,7 +2539,7 @@ gst_asf_demux_add_video_stream (GstASFDemux * demux,
+ 
+   /* yes, asf_stream_video_format and gst_riff_strf_vids are the same */
+   caps = gst_riff_create_video_caps (video->tag, NULL,
+-      (gst_riff_strf_vids *) video, extradata, NULL, &codec_name);
++      (gst_riff_strf_vids *) video, NULL, NULL, &codec_name);
+ 
+   if (caps == NULL) {
+     caps = gst_caps_new_simple ("video/x-asf-unknown", "fourcc",
+@@ -2877,6 +2892,13 @@ gst_asf_demux_parse_stream_object (GstASFDemux * demux, guint8 * data,
+       GST_INFO ("object is a video stream with %u bytes of "
+           "additional data", vsize);
+ 
++      /*read video header*/
++      gst_asf_demux_get_buffer (&(demux->video_header), video_object.size, &data, &size);
++      demux->video_header_send_flag = FALSE;
++      /*recover data and size*/
++      data -= video_object.size;
++      size += video_object.size;
++	  
+       if (!gst_asf_demux_get_stream_video_format (&video_format_object,
+               &data, &size)) {
+         goto not_enough_data;
+diff --git a/gst/asfdemux/gstasfdemux.h b/gst/asfdemux/gstasfdemux.h
+index daad917..a98e791 100644
+--- a/gst/asfdemux/gstasfdemux.h
++++ b/gst/asfdemux/gstasfdemux.h
+@@ -185,6 +185,8 @@ struct _GstASFDemux {
+   guint32              num_audio_streams;
+   guint32              num_video_streams;
+   guint32              num_streams;
++  GstBuffer           *video_header;
++  gboolean             video_header_send_flag;
+   AsfStream            stream[GST_ASF_DEMUX_NUM_STREAMS];
+   gboolean             activated_streams;
+   GstFlowCombiner     *flowcombiner;
+-- 
+1.9.1
+

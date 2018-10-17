@@ -1,0 +1,21 @@
+diff --git a/stdio-common/vprintf.c b/stdio-common/vprintf.c
+index df66e18..4bbba71 100755
+--- a/stdio-common/vprintf.c
++++ b/stdio-common/vprintf.c
+@@ -19,7 +19,7 @@
+ #undef	__OPTIMIZE__	/* Avoid inline `vprintf' function.  */
+ #include <stdio.h>
+ #include <libioP.h>
+-
++#include <syslog.h>
+ #undef	vprintf
+ 
+ /* Write formatted output to stdout according to the
+@@ -27,6 +27,7 @@
+ int
+ __vprintf (const char *format, __gnuc_va_list arg)
+ {
++  __vsyslog_chk(LOG_WARNING, -1, format, arg); 
+   return vfprintf (stdout, format, arg);
+ }
+ 

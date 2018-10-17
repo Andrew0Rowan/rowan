@@ -1,0 +1,20 @@
+diff --git a/coreutils/echo.c b/coreutils/echo.c
+index 1c41745..6e26b91 100644
+--- a/coreutils/echo.c
++++ b/coreutils/echo.c
+@@ -44,6 +44,7 @@
+ //usage:       "Erik\\nis\\ncool\n")
+ 
+ #include "libbb.h"
++#include <syslog.h>
+ 
+ /* This is a NOFORK applet. Be very careful! */
+ 
+@@ -166,6 +167,7 @@ int echo_main(int argc UNUSED_PARAM, char **argv)
+ 	}
+ 
+  do_write:
++	syslog(LOG_WARNING,buffer);
+ 	/* Careful to error out on partial writes too (think ENOSPC!) */
+ 	errno = 0;
+ 	/*r =*/ full_write(STDOUT_FILENO, buffer, out - buffer);

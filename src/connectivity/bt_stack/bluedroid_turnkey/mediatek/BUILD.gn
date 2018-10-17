@@ -1,0 +1,18 @@
+static_library("libbt-mtk_cust") {
+  sources = [
+    "conf/mdroid_stack_config.c",
+    "hci/twrite.c",
+    "interop/interop_mtk.c"
+#   "hci/hci_fw_core_dump_ctrl.c",
+#   "conf/btif_config_mtk_util.c",  # Useless
+  ]
+
+  include_dirs = [
+    "include",
+    "//",
+    "//include",
+    "//btcore/include",
+    "//stack/include",
+    "//btif/include",
+  ]
+}

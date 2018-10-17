@@ -1,0 +1,140 @@
+{
+    "MTK_PLATFORM_CFG": {
+	"config_version": "V1.1.2",
+	"platform": "MT8516",
+	"project": "auto-ivi",
+	"storage": "EMMC",
+	"boot_channel": "MSDC_0",
+	"block_size": "0x20000",
+	"skip_pmt_operate": true
+    },
+    "PRELOADER": {
+        "boundary_check": true, 
+        "is_download": true, 
+        "file_name": "preloader.bin", 
+        "is_reserved": false, 
+        "partition_name": "PRELOADER", 
+        "partition_size": 16777216, 
+        "physical_start_addr": 0, 
+        "linear_start_addr": 0, 
+        "region": "EMMC_BOOT_1", 
+        "storage": "HW_STORAGE_EMMC", 
+        "operation_type": "BOOTLOADERS", 
+        "type": "SV5_BL_BIN", 
+        "reserve": 0
+    }, 
+    "MBR": {
+        "boundary_check": true, 
+        "is_download": true, 
+        "file_name": "MBR", 
+        "is_reserved": false, 
+        "partition_name": "MBR", 
+        "partition_size": 1048576, 
+        "physical_start_addr": 0, 
+        "linear_start_addr": 16777216, 
+        "region": "EMMC_USER", 
+        "storage": "HW_STORAGE_EMMC", 
+        "operation_type": "UPDATE", 
+        "type": "NORMAL_ROM", 
+        "reserve": 0
+    }, 
+    "PMT": {
+        "operation_type": "RESERVED"
+    }, 
+    "PRO_INFO": {
+        "operation_type": "PROTECTED"
+    }, 
+    "NVRAM": {
+        "operation_type": "BINREGION"
+    }, 
+    "PROTECT_F": {
+        "operation_type": "PROTECTED"
+    }, 
+    "PROTECT_S": {
+        "operation_type": "PROTECTED"
+    },
+    "SECCFG": {
+        "operation_type": "INVISIBLE"
+    }, 
+    "UBOOT": {
+        "file_name": "lk.bin"
+    }, 
+    "boot": {
+        "file_name": "boot.img"
+    }, 
+    "recovery": {
+        "file_name": "recovery.img"
+    }, 
+    "SEC_RO": {
+        "file_name": "secro.img", 
+        "type": "YAFFS_IMG"
+    }, 
+    "MISC": {
+        "operation_type": "INVISIBLE"
+    }, 
+    "LOGO": {
+        "file_name": "logo.bin", 
+        "type": "NORMAL_ROM"
+    }, 
+    "EXPDB": {
+        "operation_type": "INVISIBLE"
+    }, 
+    "TEE1": {
+        "file_name": "tz.img"
+    }, 
+    "TEE2": {
+        "file_name": "tz.img"
+    }, 
+    "KB": {
+        "operation_type": "PROTECTED"
+    }, 
+    "DKB": {
+        "operation_type": "PROTECTED"
+    }, 
+    "system": {
+        "file_name": "system.img", 
+        "type": "YAFFS_IMG"
+    }, 
+    "cache": {
+        "file_name": "cache.img", 
+        "type": "YAFFS_IMG"
+    }, 
+    "persisbackup": {
+        "file_name": "persistbackup.img", 
+        "type": "EXT4"
+    },
+    "userdata": {
+        "file_name": "userdata.img", 
+        "type": "YAFFS_IMG"
+    }, 
+    "OTP": {
+        "boundary_check": false, 
+        "is_download": false, 
+        "file_name": "NONE", 
+        "is_reserved": true, 
+        "partition_name": "OTP", 
+        "partition_size": 45088768, 
+        "physical_start_addr": 4294902104, 
+        "linear_start_addr": 4294902104, 
+        "region": "EMMC_USER", 
+        "storage": "HW_STORAGE_EMMC", 
+        "operation_type": "RESERVED", 
+        "type": "NONE", 
+        "reserve": 0
+    }, 
+    "BMTPOOL": {
+        "boundary_check": false, 
+        "is_download": false, 
+        "file_name": "NONE", 
+        "is_reserved": true, 
+        "partition_name": "BMTPOOL", 
+        "partition_size": 22020096, 
+        "physical_start_addr": 4294901928, 
+        "linear_start_addr": 4294901928, 
+        "region": "EMMC_USER", 
+        "storage": "HW_STORAGE_EMMC", 
+        "operation_type": "RESERVED", 
+        "type": "NONE", 
+        "reserve": 0
+    }
+}

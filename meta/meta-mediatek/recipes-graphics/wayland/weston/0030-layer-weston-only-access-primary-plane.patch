@@ -1,0 +1,33 @@
+From 8bac646cd3d069b5d94083ec2ca6b10d4078161f Mon Sep 17 00:00:00 2001
+From: Nelson Liu <nelson.liu@mediatek.com>
+Date: Thu, 15 Dec 2016 14:57:43 +0800
+Subject: [PATCH 18/18] layer: weston only access primary plane
+
+weston only use primary plane. Cursor and
+overlay plane for other use.
+Test: test ok
+
+Change-Id: I2eebad33ac8cf77d77412c3ee22b682bdae5d034
+Signed-off-by: Nelson Liu <nelson.liu@mediatek.com>
+CR-Id: AUTO00000252
+---
+ src/compositor-drm.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/compositor-drm.c b/src/compositor-drm.c
+index 35e110f..0825781 100644
+--- a/src/compositor-drm.c
++++ b/src/compositor-drm.c
+@@ -4719,7 +4719,8 @@ drm_plane_create(struct drm_backend *b, const drmModePlane *kplane)
+ 	else
+ 		plane->type = WDRM_PLANE_TYPE_OVERLAY;
+ 
+-	wl_list_insert(&b->plane_list, &plane->link);
++	if (plane->type == WDRM_PLANE_TYPE_PRIMARY)
++		wl_list_insert(&b->plane_list, &plane->link);
+ 
+ 	return plane;
+ }
+-- 
+1.9.1
+

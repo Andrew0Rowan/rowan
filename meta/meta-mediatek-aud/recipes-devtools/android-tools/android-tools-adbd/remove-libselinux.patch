@@ -1,0 +1,13 @@
+diff --git a/debian/makefiles/fastboot.mk b/debian/makefiles/fastboot.mk
+index 9e8b751..9f047ed 100644
+--- a/debian/makefiles/fastboot.mk
++++ b/debian/makefiles/fastboot.mk
+@@ -37,7 +37,7 @@ CPPFLAGS+= -I../mkbootimg
+ CPPFLAGS+= -I../../extras/ext4_utils/
+ CPPFLAGS+= -I../libsparse/include/
+ 
+-LIBS+= -lz -lselinux
++LIBS+= -lz
+ 
+ OBJS= $(SRCS:.c=.o)
+ 

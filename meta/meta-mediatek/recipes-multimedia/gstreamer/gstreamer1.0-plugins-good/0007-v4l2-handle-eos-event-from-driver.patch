@@ -1,0 +1,309 @@
+From 95625503e3c224d023868d703b4ebc070bdd10c5 Mon Sep 17 00:00:00 2001
+From: Meng Wang <meng.wang@mediatek.com>
+Date: Fri, 11 Aug 2017 15:01:28 +0800
+Subject: [PATCH] v4l2: handle eos event from driver
+
+v4l2videodec receive eos event from driver will stop play
+Test: test ok
+
+Signed-off-by: Meng Wang <meng.wang@mediatek.com>
+CR-Id: AUTO00000587
+---
+ sys/v4l2/gstv4l2object.c   | 81 +++++++++++++++++++++++++++++++++++++++
+ sys/v4l2/gstv4l2object.h   | 15 ++++++++
+ sys/v4l2/gstv4l2videodec.c | 94 ++++++++++++++++++++--------------------------
+ 3 files changed, 137 insertions(+), 53 deletions(-)
+
+diff --git a/sys/v4l2/gstv4l2object.c b/sys/v4l2/gstv4l2object.c
+index 20fb85e..6d10400 100644
+--- a/sys/v4l2/gstv4l2object.c
++++ b/sys/v4l2/gstv4l2object.c
+@@ -43,6 +43,8 @@
+ #include "gst/gst-i18n-plugin.h"
+ 
+ #include <gst/video/video.h>
++#include <sys/poll.h>
++#include <poll.h>
+ 
+ GST_DEBUG_CATEGORY_EXTERN (v4l2_debug);
+ #define GST_CAT_DEFAULT v4l2_debug
+@@ -4729,3 +4731,82 @@ gst_v4l2_object_get_crop (GstV4l2Object * obj, guint *crop_width, guint *crop_he
+   return TRUE;
+ }
+ 
++gint
++gst_v4l2_object_sub_event (GstV4l2Object * v4l2object)
++{
++  gint r;
++  struct v4l2_event_subscription sub = { 0 };
++
++  sub.type = V4L2_EVENT_SOURCE_CHANGE;
++  r = v4l2_ioctl (v4l2object->video_fd, VIDIOC_SUBSCRIBE_EVENT, &sub);
++
++  sub.type = V4L2_EVENT_EOS;
++  r = v4l2_ioctl (v4l2object->video_fd, VIDIOC_SUBSCRIBE_EVENT, &sub);
++
++  return r;
++}
++
++gint
++gst_v4l2_object_check_res_change (GstV4l2Object * v4l2object)
++{
++  struct v4l2_event e = { 0 };
++  __u32 change;
++
++  v4l2_ioctl (v4l2object->video_fd, VIDIOC_DQEVENT, &e);
++  GST_LOG ("e.type=%d",e.type);
++
++  switch (e.type) {
++    case V4L2_EVENT_SOURCE_CHANGE:
++    {
++      change = e.u.src_change.changes;
++      if (change & V4L2_EVENT_SRC_CH_RESOLUTION) {
++        GST_LOG ("Got resolution change,change=%d", change);
++        return GST_V4L2_RET_RES_CHANGE;
++       }
++    }
++    case V4L2_EVENT_EOS:
++    {
++      GST_LOG ("Vdec not support the source, stop playing it");
++      return GST_V4L2_RET_SRC_NOT_SUPPORT;
++    }
++    default :
++      goto err;
++  }
++  return GST_V4L2_RET_OK;
++err:
++  GST_LOG ("Got unknonw event");
++  return GST_V4L2_RET_FAIL;
++}
++
++gint
++gst_v4l2_object_poll (GstV4l2Object * v4l2object, gint timeout)
++{
++  struct pollfd pfd;
++  gshort wait_event = V4L2_TYPE_IS_OUTPUT (v4l2object->type) ? POLLOUT : POLLIN;
++  gint ret = 0;
++  pfd.fd = v4l2object->video_fd;
++  pfd.events = POLLERR;
++  pfd.events |= wait_event;
++  pfd.events |= POLLPRI;
++
++  GST_LOG ("before poll");
++  ret = poll (&pfd, 1, timeout);
++  GST_LOG ("after poll, pfd.revents=%d", pfd.revents);
++
++  if (ret == -1) {
++    GST_LOG ("poll fail");
++    return GST_V4L2_RET_FAIL;
++  }
++
++  if (pfd.revents & POLLERR)
++    return GST_V4L2_RET_FAIL;
++
++  if (pfd.revents & POLLPRI) {
++    ret = gst_v4l2_object_check_res_change (v4l2object);
++    return ret;
++  }
++
++  if ((pfd.revents & wait_event) == wait_event)
++    return GST_V4L2_RET_OK;
++}
++
+diff --git a/sys/v4l2/gstv4l2object.h b/sys/v4l2/gstv4l2object.h
+index 54a4199..8c5cb06 100644
+--- a/sys/v4l2/gstv4l2object.h
++++ b/sys/v4l2/gstv4l2object.h
+@@ -60,6 +60,16 @@ typedef enum {
+   GST_V4L2_IO_DMABUF_IMPORT = 5
+ } GstV4l2IOMode;
+ 
++enum gst_V4L2_ret_type {
++  GST_V4L2_RET_OK = 0,
++  GST_V4L2_RET_FAIL = -1,
++  GST_V4L2_RET_NO_FILE = -2,
++  GST_V4L2_RET_NO_FREE_BUF = -3,
++  GST_V4L2_RET_EOS = -4,
++  GST_V4L2_RET_RES_CHANGE = -5,
++  GST_V4L2_RET_SRC_NOT_SUPPORT = -6,
++};
++
+ typedef gboolean  (*GstV4l2GetInOutFunction)  (GstV4l2Object * v4l2object, gint * input);
+ typedef gboolean  (*GstV4l2SetInOutFunction)  (GstV4l2Object * v4l2object, gint input);
+ typedef gboolean  (*GstV4l2UpdateFpsFunction) (GstV4l2Object * v4l2object);
+@@ -285,6 +295,11 @@ gboolean      gst_v4l2_object_propose_allocation (GstV4l2Object * obj,
+ 
+ GstStructure * gst_v4l2_object_v4l2fourcc_to_structure (guint32 fourcc);
+ 
++gint gst_v4l2_object_sub_event (GstV4l2Object * v4l2object);
++
++gint gst_v4l2_object_check_res_change (GstV4l2Object * v4l2object);
++
++gint gst_v4l2_object_poll (GstV4l2Object * v4l2object, gint timeout);
+ 
+ #define GST_IMPLEMENT_V4L2_PROBE_METHODS(Type_Class, interface_as_function)                 \
+                                                                                             \
+diff --git a/sys/v4l2/gstv4l2videodec.c b/sys/v4l2/gstv4l2videodec.c
+index f251ff4..fcf4d6f 100644
+--- a/sys/v4l2/gstv4l2videodec.c
++++ b/sys/v4l2/gstv4l2videodec.c
+@@ -430,39 +430,6 @@ gst_v4l2_video_dec_get_oldest_frame (GstVideoDecoder * decoder)
+   return frame;
+ }
+ 
+-int gst_v4l2_sub_event(GstV4l2Object * v4l2object)
+-{
+-  int r = 0;;
+-  struct v4l2_event_subscription sub = { 0 };
+-
+-  sub.type = V4L2_EVENT_SOURCE_CHANGE;
+-  r = v4l2_ioctl(v4l2object->video_fd, VIDIOC_SUBSCRIBE_EVENT, &sub);
+-
+-  return 0;
+-}
+-
+-static gboolean gst_v4l2_check_res_change(GstV4l2Object * v4l2object)
+-{
+-  struct v4l2_event e = { 0 };
+-  int r;
+-  __u32 change;
+-
+-  GST_LOG("ENTER gst_v4l2_check_res_change");
+-  r = v4l2_ioctl(v4l2object->video_fd, VIDIOC_DQEVENT, &e);
+-
+-  GST_LOG("e.type=%d",e.type);
+-  if (e.type != V4L2_EVENT_SOURCE_CHANGE)
+-    goto end;
+-
+-  change = e.u.src_change.changes;
+-  if (change & V4L2_EVENT_SRC_CH_RESOLUTION) {
+-    GST_INFO("Got resolution change,change=%d",change);
+-    return TRUE;
+-  }
+-end:
+-  return FALSE;
+-}
+-
+ static void
+ gst_v4l2_update_caps (GstVideoDecoder * decoder, guint width, guint height, guint crop_width, guint crop_height)
+ {
+@@ -552,8 +519,7 @@ gst_v4l2_video_dec_loop (GstVideoDecoder * decoder)
+   GstBuffer *buffer = NULL;
+   GstFlowReturn ret;
+   struct pollfd pfd;
+-  short wait_event = V4L2_TYPE_IS_OUTPUT(self->v4l2capture->type) ? POLLOUT : POLLIN;
+-  int r = 0;
++  gshort wait_event = V4L2_TYPE_IS_OUTPUT(self->v4l2capture->type) ? POLLOUT : POLLIN;
+   gboolean res_changed = FALSE;
+ 
+   GST_LOG_OBJECT (decoder, "Allocate output buffer");
+@@ -563,21 +529,11 @@ gst_v4l2_video_dec_loop (GstVideoDecoder * decoder)
+      * stream lock. we know that the acquire may need to poll until more frames
+      * comes in and holding this lock would prevent that.
+      */
+-    pfd.fd = self->v4l2capture->video_fd;
+-    pfd.events = POLLERR;
+-    pfd.events |= wait_event;
+-
+-    if (!V4L2_TYPE_IS_OUTPUT(self->v4l2capture->type))
+-      pfd.events |= POLLPRI;
+-
+-    GST_LOG ("before poll");
+-    r = poll(&pfd, 1, 0);
+-    GST_LOG ("after poll,pfd.revents=%d",pfd.revents);
+-
+-    if (pfd.revents & POLLPRI) 
+-      res_changed = gst_v4l2_check_res_change(self->v4l2capture);
+-
+-    if (res_changed == TRUE) {
++    res_changed = gst_v4l2_object_poll (self->v4l2capture, 0);
++    if (res_changed == GST_V4L2_RET_SRC_NOT_SUPPORT) {
++      goto src_not_support;
++    }
++    if (res_changed == GST_V4L2_RET_RES_CHANGE) {
+       GstVideoInfo info;
+       guint crop_width = 0;
+       guint crop_height = 0;
+@@ -677,6 +633,18 @@ gst_v4l2_video_dec_loop (GstVideoDecoder * decoder)
+ 
+   return;
+ 
++src_not_support:
++  {
++    GST_ERROR_OBJECT (decoder,
++        "Vdec not support the source, post error message to pipeline to stop playing it");
++    GError *gerror = g_error_new_literal (G_FILE_ERROR,
++        G_FILE_ERROR_NOENT, "Vdec not support the source");
++    gchar *sent_debug = g_strdup_printf ("%s(%d): %s ()",__FILE__, __LINE__, __FUNCTION__);
++
++    gst_element_post_message (&decoder->element,
++        gst_message_new_error(GST_OBJECT_CAST (decoder), gerror, sent_debug));
++  }
++
+ beach:
+   GST_DEBUG_OBJECT (decoder, "Leaving output thread: %s",
+       gst_flow_get_name (ret));
+@@ -741,7 +709,6 @@ gst_v4l2_video_dec_handle_frame (GstVideoDecoder * decoder,
+   GstBuffer *tmp;
+   GstElementClass *element_class = GST_ELEMENT_GET_CLASS (decoder);
+   GstPadTemplate *pad_template;
+-  int r = 0;
+ 
+   GST_DEBUG_OBJECT (self, "Handling frame %d", frame->system_frame_number);
+ 
+@@ -796,6 +763,8 @@ gst_v4l2_video_dec_handle_frame (GstVideoDecoder * decoder,
+     }
+ 
+     GST_VIDEO_DECODER_STREAM_UNLOCK (decoder);
++    if (gst_v4l2_object_sub_event (self->v4l2output) < 0)
++      goto register_sub_event_failed;
+     ret =
+         gst_v4l2_buffer_pool_process (GST_V4L2_BUFFER_POOL (self->
+             v4l2output->pool), &codec_data);
+@@ -803,7 +772,10 @@ gst_v4l2_video_dec_handle_frame (GstVideoDecoder * decoder,
+ 
+     gst_buffer_unref (codec_data);
+ 
+-    /* For decoders G_FMT returns coded size, G_SELECTION returns visible size
++    if (gst_v4l2_object_poll (self->v4l2output, 0) == GST_V4L2_RET_SRC_NOT_SUPPORT)
++      goto src_not_support;
++
++   /* For decoders G_FMT returns coded size, G_SELECTION returns visible size
+      * in the compose rectangle. gst_v4l2_object_acquire_format() checks both
+      * and returns the visible size as with/height and the coded size as
+      * padding. */
+@@ -899,7 +871,8 @@ gst_v4l2_video_dec_handle_frame (GstVideoDecoder * decoder,
+     /* Start the processing task, when it quits, the task will disable input
+      * processing to unlock input if draining, or prevent potential block */
+     g_atomic_int_set (&self->processing, TRUE);
+-    r = gst_v4l2_sub_event(self->v4l2capture);
++    if (gst_v4l2_object_sub_event (self->v4l2capture) < 0)
++      goto register_sub_event_failed;
+     if (!gst_pad_start_task (decoder->srcpad,
+             (GstTaskFunction) gst_v4l2_video_dec_loop, self,
+             (GDestroyNotify) gst_v4l2_video_dec_loop_stopped))
+@@ -971,6 +944,21 @@ process_failed:
+     ret = GST_FLOW_ERROR;
+     goto drop;
+   }
++
++src_not_support:
++  {
++    GST_ERROR_OBJECT (self, "Vdec not support the source");
++    ret = GST_FLOW_ERROR;
++    goto drop;
++  }
++
++register_sub_event_failed:
++  {
++    GST_ERROR_OBJECT (self, "register sub event to driver failed");
++    ret = GST_FLOW_ERROR;
++    goto drop;
++  }
++
+ drop:
+   {
+     gst_video_decoder_drop_frame (decoder, frame);
+-- 
+1.9.1
+

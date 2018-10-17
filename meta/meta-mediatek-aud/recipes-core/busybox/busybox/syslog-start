@@ -1,0 +1,64 @@
+#!/bin/sh
+
+SYSLOG=busybox-syslog.service
+KLOGD=busybox-klogd.service
+CONFFILE=/data/syslog.conf
+DATETAGE=$(date +%m%d%H%M%S)
+
+function do_start() {
+	systemctl start $SYSLOG
+}
+
+function do_stop() {
+	systemctl stop $KLOGD
+	systemctl stop $SYSLOG
+}
+
+
+function do_set_level() {
+	LOGLEVEL="debug"
+	case $1 in
+		0)
+			LOGLEVEL="emerg" ;;
+		1)
+			LOGLEVEL="alert" ;;
+		2)
+			LOGLEVEL="crit" ;;
+		3)
+			LOGLEVEL="err" ;;
+		4)
+			LOGLEVEL="warning" ;;
+		5)
+			LOGLEVEL="notice" ;;
+		6)
+			LOGLEVEL="info" ;;
+		7)
+			LOGLEVEL="debug" ;;
+	esac
+	
+	config_init
+
+	sed -i "s/^\*\.[a-z*]*/\*\.${LOGLEVEL}/g" ${CONFFILE}
+	echo "set level $LOGLEVEL"
+}
+
+function do_set_output() {
+	config_init
+
+	sed -i "s:^\(\*\.[a-z]*[[:space:]]*\)\(.*\)$:\1${1}:g" ${CONFFILE}
+}
+
+SD_DIR=`mount | grep mmcblk1 | sed "s/^\/dev\/\(mmcblk1[p1]*\)[[:space:]]*.*$/\1/g"`
+RO=`mount | grep mmcblk1 | grep \(ro,`
+
+if [ -z "$SD_DIR" -o ! -z "$RO" ]; then
+	#do_set_output /data/syslog-$DATETAGE.log
+	exec /sbin/syslogd $@
+else
+	if [ -f /var/log/syslog.log ]; then
+		cp /var/log/syslog.log /run/media/$SD_DIR/ -f
+	fi
+	do_set_output /run/media/$SD_DIR/syslog.log
+	exec /sbin/syslogd $@
+fi
+

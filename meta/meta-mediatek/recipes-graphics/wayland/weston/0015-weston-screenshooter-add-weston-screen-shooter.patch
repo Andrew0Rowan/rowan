@@ -1,0 +1,932 @@
+From ea4a86445a00c475c38a04c9b1cf71633ea5fa3c Mon Sep 17 00:00:00 2001
+From: mtk13576 <yr.yang@mediatek.com>
+Date: Thu, 9 Nov 2017 10:53:24 +0800
+Subject: [PATCH 4/4] weston screenshooter: add weston screen shooter
+
+support multi-screen dump
+add screen-shooter feature to dump the screen data.
+use the command: weston-simple-screenshooter-mtk -m/s
+Test: ok
+
+Change-Id: Ia05d1fac7f8355dcb69d9b682b747b073efed4ff
+Signed-off-by: mtk13576 <yr.yang@mediatek.com>
+CR-Id: AUTO00000252
+---
+ Makefile.am                        |  18 +++
+ clients/simple-screenshooter-mtk.c | 259 ++++++++++++++++++++++++++++++
+ protocol/weston-configure-mtk.xml  |   9 ++
+ src/compositor-drm.c               | 314 ++++++++++++++++++++++++++++++++++---
+ src/compositor.h                   |   2 +
+ src/weston-screenshooter-mtk.c     | 129 +++++++++++++++
+ 6 files changed, 707 insertions(+), 24 deletions(-)
+ create mode 100644 clients/simple-screenshooter-mtk.c
+ create mode 100644 src/weston-screenshooter-mtk.c
+
+diff --git a/Makefile.am b/Makefile.am
+index d9cf059..acf2bb3 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -103,6 +103,7 @@ weston_SOURCES =					\
+ 	shared/platform.h				\
+ 	src/weston-egl-ext.h				\
+ 	src/notification-backend-mtk.c			\
++	src/weston-screenshooter-mtk.c			\
+ 	src/weston-configure-mtk.c			\
+ 	src/weston-configure-mtk.h  		\
+ 	src/performance-panel-ivi-mtk.c
+@@ -621,6 +622,23 @@ weston_simple_configure_mtk_LDADD =  $(EGL_LIBS) libtoytoolkit.la
+ BUILT_SOURCES += protocol/linux-dmabuf-unstable-v1-client-protocol.h
+ endif
+ 
++if BUILD_SIMPLE_CONFIGURE_MTK_CLIENT
++demo_clients += weston-simple-screenshooter-mtk
++weston_simple_screenshooter_mtk_SOURCES = clients/simple-screenshooter-mtk.c
++nodist_weston_simple_screenshooter_mtk_SOURCES =               \
++        protocol/xdg-shell-unstable-v5-protocol.c               \
++        protocol/xdg-shell-unstable-v5-client-protocol.h        \
++        protocol/fullscreen-shell-unstable-v1-protocol.c        \
++        protocol/fullscreen-shell-unstable-v1-client-protocol.h \
++        protocol/linux-dmabuf-unstable-v1-protocol.c           \
++        protocol/linux-dmabuf-unstable-v1-client-protocol.h    \
++        protocol/weston-configure-mtk-protocol.c               \
++        protocol/weston-configure-mtk-client-protocol.h
++weston_simple_screenshooter_mtk_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
++weston_simple_screenshooter_mtk_LDADD =  $(EGL_LIBS) libtoytoolkit.la
++BUILT_SOURCES += protocol/linux-dmabuf-unstable-v1-client-protocol.h
++endif
++
+ noinst_LTLIBRARIES += libtoytoolkit.la
+ 
+ libtoytoolkit_la_SOURCES =				\
+diff --git a/clients/simple-screenshooter-mtk.c b/clients/simple-screenshooter-mtk.c
+new file mode 100644
+index 0000000..cbca18b
+--- /dev/null
++++ b/clients/simple-screenshooter-mtk.c
+@@ -0,0 +1,259 @@
++/*
++ * Copyright © 2008 Kristian Høgsberg
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice (including the next
++ * paragraph) shall be included in all copies or substantial portions of the
++ * Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++ * DEALINGS IN THE SOFTWARE.
++ */
++
++#include "config.h"
++
++#include <stdint.h>
++#include <errno.h>
++#include <stdlib.h>
++#include <stdio.h>
++#include <string.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <limits.h>
++#include <sys/param.h>
++#include <sys/mman.h>
++#include <cairo.h>
++
++#include <wayland-client.h>
++#include "weston-configure-mtk-client-protocol.h"
++#include "shared/os-compatibility.h"
++#include "shared/xalloc.h"
++
++/* The screenshooter is a good example of a custom object exposed by
++ * the compositor and serves as a test bed for implementing client
++ * side marshalling outside libwayland.so */
++
++static struct wl_shm *shm;
++static struct weston_screenshooter_mtk *mtk_screenshooter;
++static struct wl_list output_list;
++int min_x, min_y, max_x, max_y;
++int buffer_copy_done;
++
++struct screenshooter_output {
++	struct wl_output *output;
++	struct wl_buffer *buffer;
++	int width, height, offset_x, offset_y;
++	void *data;
++	struct wl_list link;
++};
++
++static void
++display_handle_geometry(void *data,
++			struct wl_output *wl_output,
++			int x,
++			int y,
++			int physical_width,
++			int physical_height,
++			int subpixel,
++			const char *make,
++			const char *model,
++			int transform)
++{
++	struct screenshooter_output *output;
++
++	output = wl_output_get_user_data(wl_output);
++
++	if (wl_output == output->output) {
++		output->offset_x = x;
++		output->offset_y = y;
++	}
++}
++
++static void
++display_handle_mode(void *data,
++		    struct wl_output *wl_output,
++		    uint32_t flags,
++		    int width,
++		    int height,
++		    int refresh)
++{
++	struct screenshooter_output *output;
++
++	output = wl_output_get_user_data(wl_output);
++
++	if (wl_output == output->output && (flags & WL_OUTPUT_MODE_CURRENT)) {
++		output->width = width;
++		output->height = height;
++	}
++}
++
++static const struct wl_output_listener output_listener = {
++	display_handle_geometry,
++	display_handle_mode
++};
++
++static void
++screenshooter_done(void *data, struct weston_screenshooter_mtk *mtk_screenshooter)
++{
++	fprintf(stderr, "screenshooter_done\n");
++	buffer_copy_done = 1;
++}
++
++static const struct weston_screenshooter_mtk_listener screenshooter_mtk_listener =
++{
++	screenshooter_done
++};
++
++static void
++handle_global(void *data, struct wl_registry *registry,
++	      uint32_t name, const char *interface, uint32_t version)
++{
++	static struct screenshooter_output *output;
++
++	if (strcmp(interface, "wl_output") == 0) {
++		output = xmalloc(sizeof *output);
++		output->output = wl_registry_bind(registry, name,
++						  &wl_output_interface, 1);
++		wl_list_insert(&output_list, &output->link);
++		wl_output_add_listener(output->output, &output_listener, output);
++	} else if (strcmp(interface, "wl_shm") == 0) {
++		shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
++	} else if (strcmp(interface, "weston_screenshooter_mtk") == 0) {
++		mtk_screenshooter = wl_registry_bind(registry, name,
++						 &weston_screenshooter_mtk_interface,
++						 1);
++	}
++}
++
++static void
++handle_global_remove(void *data, struct wl_registry *registry, uint32_t name)
++{
++	/* XXX: unimplemented */
++}
++
++static const struct wl_registry_listener registry_listener = {
++	handle_global,
++	handle_global_remove
++};
++
++static struct wl_buffer *
++create_shm_buffer(int width, int height, void **data_out)
++{
++	struct wl_shm_pool *pool;
++	struct wl_buffer *buffer;
++	int fd, size, stride;
++	void *data;
++
++	stride = width * 4;
++	size = stride * height;
++
++	fd = os_create_anonymous_file(size);
++	if (fd < 0) {
++		fprintf(stderr, "creating a buffer file for %d B failed: %m\n",
++			size);
++		return NULL;
++	}
++
++	data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++	if (data == MAP_FAILED) {
++		fprintf(stderr, "mmap failed: %m\n");
++		close(fd);
++		return NULL;
++	}
++
++	pool = wl_shm_create_pool(shm, fd, size);
++	close(fd);
++	buffer = wl_shm_pool_create_buffer(pool, 0, width, height, stride,
++					   WL_SHM_FORMAT_XRGB8888);
++	wl_shm_pool_destroy(pool);
++
++	*data_out = data;
++	fprintf(stderr,"create_shm_buffer\n");
++	return buffer;
++}
++
++static void
++usage(int error_code)
++{
++	fprintf(stderr, "Usage: simple-screenshooter-mtk [OPTIONS]\n\n"
++		"  -m        dump mainscreen\n"
++		"  -s        dump subscreen\n"
++		"  -h        This help text! default dump all screens\n\n");
++
++	exit(error_code);
++}
++
++int main(int argc, char *argv[])
++{
++	struct wl_display *display;
++	struct wl_registry *registry;
++	struct screenshooter_output *output;
++	int i, width, height;
++	int mainscreen=0;
++	int subscreen=0;
++	for (i = 1; i < argc; i++) {
++		if (strcmp("-m", argv[i]) == 0)
++			mainscreen = 1;
++		else if (strcmp("-s", argv[i]) == 0)
++			subscreen = 1;
++		else if (strcmp("-h", argv[i]) == 0)
++			usage(EXIT_SUCCESS);
++		else
++			usage(EXIT_SUCCESS);
++	}
++
++	display = wl_display_connect(NULL);
++	if (display == NULL) {
++		fprintf(stderr, "failed to create display: %m\n");
++		return -1;
++	}
++
++	wl_list_init(&output_list);
++	registry = wl_display_get_registry(display);
++	wl_registry_add_listener(registry, &registry_listener, NULL);
++	wl_display_dispatch(display);
++	wl_display_roundtrip(display);
++	if (mtk_screenshooter == NULL) {
++		fprintf(stderr, "display doesn't support screenshooter\n");
++		return -1;
++	}
++
++	weston_screenshooter_mtk_add_listener(mtk_screenshooter,
++					  &screenshooter_mtk_listener,
++					  NULL);
++
++	wl_list_for_each_reverse(output, &output_list, link) {
++		if(mainscreen == 1) {
++			output->buffer = create_shm_buffer(1920, 1080, &output->data);
++			weston_screenshooter_mtk_shoot(mtk_screenshooter,output->output,output->buffer);
++			buffer_copy_done = 0;
++			while (!buffer_copy_done)
++				wl_display_roundtrip(display);
++
++			break;
++		}
++		else if(subscreen == 1) {
++			subscreen = 0;
++		}
++		else {
++			output->buffer = create_shm_buffer(1920, 1080, &output->data);
++			weston_screenshooter_mtk_shoot(mtk_screenshooter,output->output,output->buffer);
++			buffer_copy_done = 0;
++			while (!buffer_copy_done)
++				wl_display_roundtrip(display);
++		}
++	}
++	fprintf(stderr,"end!!!!!\n");
++	return 0;
++}
+diff --git a/protocol/weston-configure-mtk.xml b/protocol/weston-configure-mtk.xml
+index 33f1c3b..c3f7144 100644
+--- a/protocol/weston-configure-mtk.xml
++++ b/protocol/weston-configure-mtk.xml
+@@ -145,5 +145,14 @@
+ 
+   </interface>
+ 
++  <interface name="weston_screenshooter_mtk" version="1">
++    <request name="shoot">
++      <arg name="output" type="object" interface="wl_output"/>
++      <arg name="buffer" type="object" interface="wl_buffer"/>
++    </request>
++    <event name="done">
++    </event>
++  </interface>
++
+ </protocol>
+ 
+diff --git a/src/compositor-drm.c b/src/compositor-drm.c
+index 3ed1fcd..729b907 100644
+--- a/src/compositor-drm.c
++++ b/src/compositor-drm.c
+@@ -80,6 +80,10 @@
+ #define GBM_BO_USE_CURSOR GBM_BO_USE_CURSOR_64X64
+ #endif
+ 
++#define DRM_ALIGN(X,bit) ((X + bit-1) & (~(bit-1)))
++
++#define MTK_MAX_PLANE                4
++
+ /**
+  * Possible values for the WDRM_PLANE_TYPE property.
+  */
+@@ -195,6 +199,7 @@ struct drm_backend {
+ 	int num_crtcs;
+ 	uint32_t crtc_allocator;
+ 	uint32_t connector_allocator;
++	uint32_t writeback_connectors;
+ 	struct wl_listener session_listener;
+ 	uint32_t gbm_format;
+ 
+@@ -345,6 +350,8 @@ struct drm_output {
+ 
+ 	int pipe;
+ 	uint32_t connector_id;
++	uint32_t wb_connector_id;
++	uint32_t wb_prop_id;
+ 	struct drm_edid edid;
+ 	drmModePropertyPtr dpms_prop;
+ 	uint32_t gbm_format;
+@@ -375,6 +382,7 @@ struct drm_output {
+ 	struct wl_listener recorder_frame_listener;
+ 
+ 	struct wl_list plane_flip_list; /* drm_plane::flip_link */
++	struct raw_texture* raw_data;
+ };
+ 
+ struct drm_fourcc_info {
+@@ -406,10 +414,192 @@ static struct drm_fourcc_info fourcc_tbl[] = {
+ 	{0, 0, 0},
+ };
+ 
++struct raw_texture {
++    /* input */
++    int width;
++    int height;
++    int fourcc;
++    int bpp;
++    int plane_nums;
++
++    unsigned int pitch[MTK_MAX_PLANE];
++    unsigned int offset[MTK_MAX_PLANE];
++    int fds[MTK_MAX_PLANE];
++    unsigned int handle[MTK_MAX_PLANE];
++
++    void *texbuf;
++    int size;
++
++    unsigned int fb_id;
++    int  index;
++};
++
+ static struct gl_renderer_interface *gl_renderer;
+ 
+ static const char default_seat[] = "seat0";
+ 
++int drm_alloc_gem_test(int fd, int width, int height, int fourcc, struct raw_texture * raw_data)
++{
++    void *map = NULL;
++    struct drm_mode_create_dumb create_arg;
++    struct drm_mode_map_dumb map_arg;
++    struct drm_prime_handle prime_arg;
++    int i, ret;
++    unsigned int alloc_size;
++
++    memset(&create_arg, 0, sizeof(create_arg));
++    memset(&map_arg, 0, sizeof(map_arg));
++    memset(&prime_arg, 0, sizeof(prime_arg));
++
++    raw_data->width = width;
++    raw_data->height = height;
++    raw_data->fourcc = fourcc;
++
++    for(i = 0; i < MTK_MAX_PLANE; i ++ )
++        raw_data->fds[i] = -1;
++
++    switch (raw_data->fourcc) {
++    case DRM_FORMAT_NV12:
++        raw_data->bpp = 12;
++        raw_data->plane_nums = 2;
++        break;
++
++    case DRM_FORMAT_NV16:
++        raw_data->bpp = 16;
++        raw_data->plane_nums = 2;
++        break;
++
++    case DRM_FORMAT_RGB565:
++    case DRM_FORMAT_YUYV:
++    case DRM_FORMAT_UYVY:
++        raw_data->bpp = 16;
++        raw_data->plane_nums = 1;
++        break;
++
++    case DRM_FORMAT_ARGB8888:
++    case DRM_FORMAT_XRGB8888:
++        raw_data->bpp = 32;
++        raw_data->plane_nums = 1;
++        break;
++    case DRM_FORMAT_RGB888:
++    case DRM_FORMAT_BGR888:
++        raw_data->bpp = 24;
++        raw_data->plane_nums = 1;
++        break;
++    case DRM_FORMAT_YUV420:
++    case DRM_FORMAT_YVU420:
++        raw_data->bpp = 12;
++        raw_data->plane_nums = 3;
++        break;
++
++    default:
++        fprintf(stderr, "unsupported format 0x%08x\n",  raw_data->fourcc);
++        return -1;
++    }
++
++    if (raw_data->plane_nums == 3) {
++        if (raw_data->bpp == 12) {
++            raw_data->pitch[0] = DRM_ALIGN(raw_data->width, 16);
++            raw_data->pitch[1] = raw_data->pitch[0] / 2;
++            raw_data->pitch[2] = raw_data->pitch[0] / 2;
++            raw_data->offset[0] = 0;
++            raw_data->offset[1] = raw_data->pitch[0] * raw_data->height;
++            raw_data->offset[2] = raw_data->offset[1] + raw_data->pitch[1] * raw_data->height / 2;
++            alloc_size = raw_data->offset[2] + raw_data->pitch[2] * raw_data->height / 2;
++        } else {
++            fprintf(stderr,"debug: please add new format 0x%x\n", raw_data->fourcc);
++            return -1;
++        }
++    } else if (raw_data->plane_nums == 2) {
++        raw_data->pitch[0] = DRM_ALIGN(raw_data->width, 16);
++        raw_data->offset[0] = 0;
++        if (raw_data->bpp == 16) {
++            raw_data->pitch[1] = raw_data->pitch[0];
++            raw_data->offset[1] = raw_data->pitch[0] * raw_data->height;
++            alloc_size = raw_data->offset[1] + raw_data->pitch[1] * raw_data->height;
++            fprintf(stderr,"debug:  %s %d alloc_size = %d o/p [%d %d]\n",
++                __FUNCTION__, __LINE__, alloc_size, raw_data->offset[1], raw_data->pitch[1]);
++        }
++        else if (raw_data->bpp == 12) {
++            raw_data->pitch[1] = raw_data->pitch[0];
++            raw_data->offset[1] = raw_data->pitch[0] * raw_data->height;
++            alloc_size = raw_data->offset[1] + raw_data->pitch[1] * raw_data->height;
++        } else {
++            fprintf(stderr,"debug: please add new format 0x%x\n", raw_data->fourcc);
++            return -1;
++        }
++    } else {
++        raw_data->pitch[0] = DRM_ALIGN(raw_data->width * raw_data->bpp / 8, 16);
++        raw_data->offset[0] = 0;
++        alloc_size = raw_data->pitch[0] * raw_data->height;
++    }
++
++    create_arg.bpp = raw_data->bpp;
++    create_arg.width = raw_data->width;
++    create_arg.height = raw_data->height;
++
++    ret = drmIoctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, &create_arg);
++    if (ret) {
++            fprintf(stderr,"error: drmIoctl %d DRM_IOCTL_MODE_CREATE_DUMB fail %d", fd, ret);
++            return -1;
++    }
++
++	for (i = 0; i < raw_data->plane_nums; i++) {
++		raw_data->fds[i] = fd;
++		raw_data->handle[i] = create_arg.handle;
++	}
++
++	if (drmModeAddFB2(fd, raw_data->width, raw_data->height,
++						raw_data->fourcc, raw_data->handle,
++						raw_data->pitch, raw_data->offset,
++						&raw_data->fb_id, 0)) {
++		weston_log("failed to add raw_data fb\n");
++		return -1;
++	}
++
++    map_arg.handle = create_arg.handle;
++
++    ret = drmIoctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &map_arg);
++    if (ret) {
++            fprintf(stderr,"error: drmIoctl DRM_IOCTL_MODE_MAP_DUMB fail %d", ret);
++            return -1;
++    }
++
++    map = mmap(0, create_arg.size, PROT_WRITE|PROT_READ , MAP_SHARED, fd, map_arg.offset);
++    if (map == MAP_FAILED) {
++            fprintf(stderr,"error: mmap fail : 0x%p", map);
++            return -1;
++    }
++
++    raw_data->texbuf = map;
++    raw_data->size = create_arg.size;
++
++    return 0;
++}
++
++static int
++_write_file(void *buf, int len, const char *file_name)
++{
++    int ret, nwrite = 0;
++
++    FILE *fp = fopen(file_name, "wb");
++    if (!fp)
++    {
++        fprintf(stderr,"debug: file %s open failed\n", file_name);
++        return -1;
++    }
++
++    while (nwrite < len) {
++        ret = fwrite(buf + nwrite, 1, len - nwrite, fp);
++        if (!ret)
++                break;
++        nwrite += ret;
++    }
++
++    fclose(fp);
++    return 0;
++}
++
+ static struct drm_fourcc_info *
+ get_drm_format_info(unsigned int format)
+ {
+@@ -620,6 +810,41 @@ drm_properties_get_from_obj(struct drm_backend *b,
+ 	return valid_mask;
+ }
+ 
++static uint64_t
++drm_properties_get_writeback_fb_value(struct drm_backend *b,
++			    uint32_t obj_id, uint32_t obj_type)
++{
++	drmModeObjectProperties *props;
++	drmModePropertyRes *prop;
++	unsigned i;
++	uint64_t value;
++
++	props = drmModeObjectGetProperties(b->drm.fd, obj_id, obj_type);
++	if (!props) {
++		weston_log("DRM error : get properties for object %u "
++			   "of type %#x '%s' failed.\n", obj_id, obj_type,
++			   drm_object_type_str(obj_type));
++		return -1;
++	}
++
++	for (i = 0; i < props->count_props; i++) {
++		prop = drmModeGetProperty(b->drm.fd, props->props[i]);
++		if (!prop)
++			continue;
++
++		if (strcmp(prop->name, "WRITEBACK_FB_ID") == 0)
++				break;
++	}
++
++
++	value = prop->prop_id;
++
++	drmModeFreeObjectProperties(props);
++
++	return value;
++}
++
++
+ /**
+  * Frees an array of property_items
+  *
+@@ -1659,6 +1884,17 @@ drm_output_populate_atomic_modeset(struct drm_output *output,
+ 
+ 	ret |= atomic_connector_add(req, output, WDRM_CONNECTOR_CRTC_ID,
+ 				    enable ? output->ddp_crtc.crtc_id : 0);
++	if(output->wb_connector_id) {
++	if (drmModeAtomicAddProperty(req, output->wb_connector_id,
++		output->props_conn.item[WDRM_CONNECTOR_CRTC_ID].id,
++		output->ddp_crtc.crtc_id) < 0)
++		return -1;
++
++	}
++//	if (drmModeAtomicAddProperty(req, output->wb_connector_id,
++//		writeback_fb_value_id, output->raw_data->fb_id) < 0)
++//		return -1;
++
+ 	ret |= atomic_crtc_add(req, output, WDRM_CRTC_MODE_ID,
+ 			       enable ? mode->blob_id : 0);
+ 	ret |= atomic_crtc_add(req, output, WDRM_CRTC_ACTIVE, enable);
+@@ -1920,6 +2156,13 @@ drm_output_repaint_atomic(struct weston_output *output_base,
+ 		wl_list_insert(&output->plane_flip_list, &plane->flip_link);
+ 	}
+ 
++	if(output->base.screenshoot_needed == 1 && output->wb_connector_id) {
++		ret = drmModeAtomicAddProperty(req, output->wb_connector_id,
++			output->wb_prop_id,
++							output->raw_data->fb_id);
++		output->base.screenshoot_dump = 1;
++	}
++
+ 	flags = DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT;
+ 	errno_save = 0;
+ 	ret = drmModeAtomicCommit(backend->drm.fd, req, flags, output);
+@@ -2183,9 +2426,18 @@ page_flip_handler(int fd, unsigned int frame,
+ 		(struct drm_backend *) output->base.compositor->backend;
+ 	struct drm_plane *plane, *plane_tmp;
+ 	struct timespec ts;
++	char filename[64];
+ 	uint32_t flags = WP_PRESENTATION_FEEDBACK_KIND_VSYNC |
+ 			 WP_PRESENTATION_FEEDBACK_KIND_HW_COMPLETION |
+ 			 WP_PRESENTATION_FEEDBACK_KIND_HW_CLOCK;
++	if(output->base.screenshoot_dump == 1 && output->wb_connector_id) {
++		snprintf(filename, 64, "/tmp/screen_dump_%u",
++			weston_compositor_get_time());
++		_write_file(output->raw_data->texbuf, output->raw_data->size, filename);
++		output->base.screenshoot_needed = 0;
++		output->base.screenshoot_dump = 0;
++	}
++
+ 
+ 	drm_output_update_msc(output, frame);
+ 
+@@ -2315,7 +2567,7 @@ drm_plane_need_mdp_process(struct drm_plane *s,
+ 		return 1;
+ 	//crop check
+ 	if ((crop_x != 0) ||(crop_y != 0) ||
+-		(crop_w != buf_w) || (crop_h != buf_w))
++		(crop_w != buf_w) || (crop_h != buf_h))
+ 		return 1;
+ 	//format check
+ 	if (drm_format_check(format) < 0)
+@@ -4252,6 +4504,7 @@ create_output_for_connector(struct drm_backend *b,
+ 
+ 	drmModeModeInfo crtc_mode;
+ 	int i;
++	int ret;
+ 	enum weston_drm_backend_output_mode mode;
+ 	struct weston_drm_backend_output_config config = {{ 0 }};
+ 
+@@ -4393,6 +4646,29 @@ create_output_for_connector(struct drm_backend *b,
+ 	/* Set native_ fields, so weston_output_mode_switch_to_native() works */
+ 	output->base.native_mode = output->base.current_mode;
+ 	output->base.native_scale = output->base.current_scale;
++	output->base.screenshoot_needed = 0;
++	output->base.screenshoot_dump = 0;
++	output->wb_connector_id = 0;
++	if(b->writeback_connectors) {
++		for(i=0; ;i++) {
++			if(b->writeback_connectors & (1 << i))
++				break;
++		}
++		output->wb_connector_id = resources->connectors[i];
++		output->wb_prop_id = drm_properties_get_writeback_fb_value(b,
++					    resources->connectors[i],
++					    DRM_MODE_OBJECT_CONNECTOR);
++		b->writeback_connectors &= ~(1 << i);
++		weston_log("YR output->wb_connector_id=%d,output->wb_prop_id=%d,output->connector_id=%d\n",output->wb_connector_id,output->wb_prop_id,output->connector_id);
++		weston_log("b->writeback_connectors=%d",b->writeback_connectors);
++	}
++	output->raw_data = (struct raw_texture*)malloc(sizeof(struct raw_texture));
++	ret = drm_alloc_gem_test(b->drm.fd,1920, 1080,
++						DRM_FORMAT_RGB888, output->raw_data);
++	if (ret != 0) {
++		weston_log("drm_alloc_gem_test failed\n");
++		return -1;
++	}
+ 
+ 	return 0;
+ 
+@@ -4418,29 +4694,6 @@ err_free:
+ 	return -1;
+ }
+ 
+-static int
+-_write_file(void *buf, int len, const char *file_name)
+-{
+-    int ret, nwrite = 0;
+-
+-    FILE *fp = fopen(file_name, "wb");
+-    if (!fp)
+-    {
+-        fprintf(stderr,"debug: file %s open failed\n", file_name);
+-        return -1;
+-    }
+-
+-    while (nwrite < len) {
+-        ret = fwrite(buf + nwrite, 1, len - nwrite, fp);
+-        if (!ret)
+-                break;
+-        nwrite += ret;
+-    }
+-
+-    fclose(fp);
+-    return 0;
+-}
+-
+ static int32_t
+ drm_dump_single_plane_buffer(struct drm_plane *s, int32_t *done)
+ {
+@@ -4737,6 +4990,7 @@ create_outputs(struct drm_backend *b, uint32_t option_connector,
+ 	drmModeRes *resources;
+ 	int i;
+ 	int x = 0, y = 0;
++	b->writeback_connectors = 0;
+ 
+ 	resources = drmModeGetResources(b->drm.fd);
+ 	if (!resources) {
+@@ -4764,6 +5018,17 @@ create_outputs(struct drm_backend *b, uint32_t option_connector,
+ 		if (connector == NULL)
+ 			continue;
+ 
++		if (connector->connection == DRM_MODE_DISCONNECTED) {
++			b->writeback_connectors |= 1 << i;
++		}
++	}
++
++	for (i = 0; i < resources->count_connectors; i++) {
++		connector = drmModeGetConnector(b->drm.fd,
++						resources->connectors[i]);
++		if (connector == NULL)
++			continue;
++
+ 		if (connector->connection == DRM_MODE_CONNECTED &&
+ 		    (option_connector == 0 ||
+ 		     connector->connector_id == option_connector)) {
+@@ -5478,6 +5743,7 @@ backend_init(struct weston_compositor *compositor,
+ 		return -1;
+ 
+ 	config_dump_global_create(compositor);
++	screenshooter_mtk_create(compositor);
+ 
+ 	compositor->dump_plane = drm_dump_plane_buffer;
+ 
+diff --git a/src/compositor.h b/src/compositor.h
+index 3f1948f..22bb5e2 100644
+--- a/src/compositor.h
++++ b/src/compositor.h
+@@ -257,6 +257,8 @@ struct weston_output {
+ 	pixman_region32_t previous_damage;
+ 	int repaint_needed;
+ 	int repaint_scheduled;
++	int screenshoot_needed;
++	int screenshoot_dump;
+ 	struct wl_event_source *repaint_timer;
+ 	struct weston_output_zoom zoom;
+ 	int dirty;
+diff --git a/src/weston-screenshooter-mtk.c b/src/weston-screenshooter-mtk.c
+new file mode 100644
+index 0000000..eb90275
+--- /dev/null
++++ b/src/weston-screenshooter-mtk.c
+@@ -0,0 +1,129 @@
++/*
++ * Copyright © 2008-2011 Kristian Høgsberg
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining
++ * a copy of this software and associated documentation files (the
++ * "Software"), to deal in the Software without restriction, including
++ * without limitation the rights to use, copy, modify, merge, publish,
++ * distribute, sublicense, and/or sell copies of the Software, and to
++ * permit persons to whom the Software is furnished to do so, subject to
++ * the following conditions:
++ *
++ * The above copyright notice and this permission notice (including the
++ * next paragraph) shall be included in all copies or substantial
++ * portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ */
++
++#include "config.h"
++
++#include <stdlib.h>
++#include <stdio.h>
++#include <string.h>
++#include <linux/input.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <sys/uio.h>
++
++#include "compositor.h"
++#include "weston-configure-mtk-server-protocol.h"
++#include "shared/helpers.h"
++
++#include "wcap/wcap-decode.h"
++
++struct screenshooter {
++	struct weston_compositor *ec;
++	struct wl_global *global;
++	struct wl_client *client;
++	struct weston_process process;
++	struct wl_listener destroy_listener;
++};
++
++struct screenshooter_frame_listener {
++	struct wl_listener listener;
++	struct weston_buffer *buffer;
++	weston_screenshooter_done_func_t done;
++	void *data;
++};
++
++static void
++weston_screenshooter_mtk_shoot(struct wl_client *client,
++		    struct wl_resource *resource,
++		    struct wl_resource *output_resource,
++		    struct wl_resource *buffer_resource)
++{
++	struct weston_output *output =
++		wl_resource_get_user_data(output_resource);
++	struct weston_buffer *buffer =
++		weston_buffer_from_resource(buffer_resource);
++	weston_log("weston_screenshooter_mtk_shoot.\n");
++	output->screenshoot_needed = 1;
++	weston_output_schedule_repaint(output);
++	if (buffer == NULL) {
++		wl_resource_post_no_memory(resource);
++		return;
++	}
++
++	weston_screenshooter_mtk_send_done(resource);
++}
++
++static const struct weston_screenshooter_mtk_interface screenshooter_mtk_implementation = {
++	weston_screenshooter_mtk_shoot
++};
++
++static void
++bind_screenshooter_mtk(struct wl_client *client,
++	     void *data, uint32_t version, uint32_t id)
++{
++	struct screenshooter *shooter = data;
++	struct wl_resource *resource;
++
++	resource = wl_resource_create(client,
++				      &weston_screenshooter_mtk_interface, 1, id);
++
++	if (resource == NULL) {
++		wl_resource_post_error(resource, WL_DISPLAY_ERROR_INVALID_OBJECT,
++			       "screenshooter failed: permission denied");
++		wl_client_post_no_memory(client);
++		return;
++	}
++
++	wl_resource_set_implementation(resource, &screenshooter_mtk_implementation,
++				       data, NULL);
++}
++
++static void
++screenshooter_destroy(struct wl_listener *listener, void *data)
++{
++	struct screenshooter *shooter =
++		container_of(listener, struct screenshooter, destroy_listener);
++
++	wl_global_destroy(shooter->global);
++	free(shooter);
++}
++
++WL_EXPORT void
++screenshooter_mtk_create(struct weston_compositor *ec)
++{
++	struct screenshooter *shooter;
++
++	shooter = malloc(sizeof *shooter);
++	if (shooter == NULL)
++		return;
++
++	shooter->ec = ec;
++	shooter->global = wl_global_create(ec->wl_display,
++					   &weston_screenshooter_mtk_interface, 1,
++					   shooter, bind_screenshooter_mtk);
++
++	shooter->destroy_listener.notify = screenshooter_destroy;
++	wl_signal_add(&ec->destroy_signal, &shooter->destroy_listener);
++}
+-- 
+1.9.1
+

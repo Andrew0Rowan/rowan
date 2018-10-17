@@ -1,0 +1,10 @@
+[Unit]
+Description=mt7668_drv_insmod
+After=ubi-data-mnt.service
+
+[Service]
+Type=simple
+ExecStart=/etc/mt7668_drv_insmod.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,60 @@
+From 9878d46832cd747e43ea40756dfefccd70757e55 Mon Sep 17 00:00:00 2001
+From: Ricky Zhang <ricky.zhang@mediatek.com>
+Date: Tue, 25 Jul 2017 11:10:12 +0800
+Subject: [PATCH] v4l2bufferpool: add buffer index to gstbuffer
+
+add buffer index to gstbuffer when camera link
+is more than 1
+Test: test ok
+
+Signed-off-by: Ricky Zhang <ricky.zhang@mediatek.com>
+CR-Id: AUTO00000556
+---
+ sys/v4l2/gstv4l2bufferpool.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/sys/v4l2/gstv4l2bufferpool.c b/sys/v4l2/gstv4l2bufferpool.c
+index 22326b3..bef7e77 100644
+--- a/sys/v4l2/gstv4l2bufferpool.c
++++ b/sys/v4l2/gstv4l2bufferpool.c
+@@ -54,7 +54,6 @@ GST_DEBUG_CATEGORY_EXTERN (GST_CAT_PERFORMANCE);
+ 
+ #define GST_V4L2_IMPORT_QUARK gst_v4l2_buffer_pool_import_quark ()
+ 
+-
+ /*
+  * GstV4l2BufferPool:
+  */
+@@ -1218,6 +1217,7 @@ gst_v4l2_buffer_pool_dqbuf (GstV4l2BufferPool * pool, GstBuffer ** buffer)
+   GstClockTime timestamp;
+   GstV4l2MemoryGroup *group;
+   gint i;
++  gint *index = NULL;
+ 
+   if ((res = gst_v4l2_buffer_pool_poll (pool)) != GST_FLOW_OK)
+     goto poll_failed;
+@@ -1339,6 +1339,13 @@ gst_v4l2_buffer_pool_dqbuf (GstV4l2BufferPool * pool, GstBuffer ** buffer)
+ 
+ done:
+   *buffer = outbuf;
++  if (obj->link > 1) {
++    index = g_slice_new0 (gint);
++    *index = group->buffer.index;
++    gst_mini_object_set_qdata (GST_MINI_OBJECT (*buffer), GST_MTK_AVM_INDEX,
++        index, (GDestroyNotify) gst_destroy_mtk_avm_index);
++    GST_INFO("add index=%p *index=%d to *buf %p", index, *index, *buffer);
++  }
+ 
+   return GST_FLOW_OK;
+ 
+@@ -1779,7 +1786,6 @@ gst_v4l2_buffer_pool_process (GstV4l2BufferPool * pool, GstBuffer ** buf)
+   GST_DEBUG_OBJECT (pool, "process buffer %p", buf);
+ 
+   g_return_val_if_fail (gst_buffer_pool_is_active (bpool), GST_FLOW_ERROR);
+-
+   if (GST_BUFFER_POOL_IS_FLUSHING (pool))
+     return GST_FLOW_FLUSHING;
+ 
+-- 
+1.9.1
+

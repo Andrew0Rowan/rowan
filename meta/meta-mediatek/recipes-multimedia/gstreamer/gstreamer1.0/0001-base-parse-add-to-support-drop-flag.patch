@@ -1,0 +1,32 @@
+From d175fd622cc56b90c90501d35d7e3d87350f29f3 Mon Sep 17 00:00:00 2001
+From: Changtao Hu <Changtao.Hu@mediatek.com>
+Date: Fri, 30 Dec 2016 15:45:42 +0800
+Subject: [PATCH] base parse: add to support drop flag
+
+Support drop flag
+Test: Pass
+
+Signed-off-by: Changtao Hu <Changtao.Hu@mediatek.com>
+CR-Id: AUTO00001835
+---
+ libs/gst/base/gstbaseparse.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/libs/gst/base/gstbaseparse.c b/libs/gst/base/gstbaseparse.c
+index c9a57c5..385962c 100644
+--- a/libs/gst/base/gstbaseparse.c
++++ b/libs/gst/base/gstbaseparse.c
+@@ -2389,6 +2389,10 @@ gst_base_parse_push_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
+       ret = GST_FLOW_OK;
+     }
+   }
++  if (frame->flags & GST_BASE_PARSE_FRAME_FLAG_DROP) {
++    GST_LOG_OBJECT (parse, "frame with drop flag");
++    ret = GST_BASE_PARSE_FLOW_DROPPED;
++  }
+ 
+   if (ret == GST_BASE_PARSE_FLOW_DROPPED) {
+     GST_LOG_OBJECT (parse, "frame (%" G_GSIZE_FORMAT " bytes) dropped", size);
+-- 
+1.9.1
+

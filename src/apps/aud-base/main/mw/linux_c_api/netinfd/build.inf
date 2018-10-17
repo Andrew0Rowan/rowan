@@ -1,0 +1,14 @@
+[build_linux_prog]
+TARGETNAME = 
+TARGETTYPE = 
+
+SOURCES = \          
+          libnetinfd.c \          
+
+DIRS =    \
+					prog \
+
+CCFLAGS += \ 
+
+INCLUDES += \            
+            ./ \

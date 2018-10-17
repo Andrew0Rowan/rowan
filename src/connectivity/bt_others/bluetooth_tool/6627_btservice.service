@@ -1,0 +1,13 @@
+[Unit]
+Description=bluetooth Daemon
+After=launcher_6627.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/btservice
+StandardOutput=tty
+StandardError=tty
+
+[Install]
+Alias=btservice
+WantedBy=multi-user.target

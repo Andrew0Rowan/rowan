@@ -1,0 +1,20 @@
+1. Generate RSA private and public key in PEM/DER format
+openssl genrsa -out prik.pem 2048
+openssl rsa -in prik.pem -pubout > pubk.pem
+openssl rsa -inform PEM -outform DER -in prik.pem -out prik.der
+openssl rsa -pubin -pubout -inform PEM -outform DER -in pubk.pem -out pubk.der
+
+2. Use tool to generate signature for eFuse blowing
+   python tool_gen_sig_for_efuse_blow.py -id dev_hrid.bin -idx num -val efuse_value.bin -pubk pubk.der -prik prik.der -out out.bin
+     -id   => binary file contains device id, 8 bytes
+     -idx  => number of efuse index, decimal
+     -val  => binary file contains efuse value for the efuse index
+     -pubk => binary file contains rsa public  key (PKCS8 format, DER)
+     -prik => binary file contains rsa private key (PKCS8 format, DER)
+     -out  => binary file contains UnitSpecificWriteToken
+
+3. openssl command for rsa-pss-sha256/sha256
+   openssl dgst -sha256 -binary -out $(DIGEST) $(INPUT_FILE)
+   openssl pkeyutl -sign -keyform DER -in $(DIGEST) -inkey $(KEY) -out $(SIGNATURE) -pkeyopt digest:sha256 -pkeyopt rsa_padding_mode:pss -pkeyopt rsa_pss_saltlen:32
+   openssl pkeyutl -verify -in $(DIGEST) -keyform DER -pubin -inkey $(KEY) -out $(SIGNATURE) -pkeyopt digest:sha256 -pkeyopt rsa_padding_mode:pss -pkeyopt rsa_pss_saltlen:32
+

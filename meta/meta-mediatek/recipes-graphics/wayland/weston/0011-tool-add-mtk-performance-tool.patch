@@ -1,0 +1,1157 @@
+From 4d780b6c40c62a99e249c9e5b70f6d063d6b2264 Mon Sep 17 00:00:00 2001
+From: Jia Rong <jia.rong@mediatek.com>
+Date: Tue, 22 Nov 2016 09:23:04 +0800
+Subject: [PATCH 11/19] tool: add mtk performance tool
+
+Add mtk performance tool
+Usage: weston-performance-mtk [Interval time] [Screen postion]
+    Interval time: Unit is Second. Default value is 1 second.
+    Screen postion: 0:middle 1:upleft 2: upright 3: left bottom
+                    4: right bottom. Default postion is right bottom.
+Test: OK
+
+Change-Id: I60e1e891ac12602bb7344885c78fa1432975bb60
+Signed-off-by: Jia Rong <jia.rong@mediatek.com>
+CR-Id: AUTO00000252
+---
+ Makefile.am                     |  18 +-
+ clients/performance-mtk.c       | 511 ++++++++++++++++++++++++++++++++++++++++
+ protocol/performance-mtk.xml    |  67 ++++++
+ src/compositor.c                |   7 +
+ src/compositor.h                |  15 ++
+ src/performance-panel-ivi-mtk.c | 400 +++++++++++++++++++++++++++++++
+ 6 files changed, 1017 insertions(+), 1 deletion(-)
+ create mode 100644 clients/performance-mtk.c
+ create mode 100644 protocol/performance-mtk.xml
+ create mode 100644 src/performance-panel-ivi-mtk.c
+
+diff --git a/Makefile.am b/Makefile.am
+index cb8e4aa..92e0608 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -104,7 +104,8 @@ weston_SOURCES =					\
+ 	src/weston-egl-ext.h				\
+ 	src/notification-backend-mtk.c			\
+ 	src/weston-configure-mtk.c			\
+-	src/weston-configure-mtk.h
++	src/weston-configure-mtk.h  		\
++	src/performance-panel-ivi-mtk.c
+ 
+ if SYSTEMD_NOTIFY_SUPPORT
+ module_LTLIBRARIES += systemd-notify.la
+@@ -139,6 +140,8 @@ nodist_weston_SOURCES =					\
+ 	protocol/linux-dmabuf-unstable-v1-server-protocol.h \
+ 	protocol/notification-mtk-protocol.c	\
+ 	protocol/notification-mtk-server-protocol.h \
++	protocol/performance-mtk-protocol.c	\
++	protocol/performance-mtk-server-protocol.h \
+ 	protocol/weston-configure-mtk-protocol.c \
+ 	protocol/weston-configure-mtk-server-protocol.h
+ 
+@@ -762,6 +765,16 @@ nodist_weston_simple_notification_mtk_SOURCES =		\
+ weston_simple_notification_mtk_LDADD = libtoytoolkit.la
+ weston_simple_notification_mtk_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
+ 
++demo_clients += weston-performance-mtk
++weston_performance_mtk_SOURCES = 			\
++	clients/performance-mtk.c			\
++	shared/helpers.h
++nodist_weston_performance_mtk_SOURCES =		\
++	protocol/performance-mtk-protocol.c		\
++	protocol/performance-mtk-client-protocol.h
++weston_performance_mtk_LDADD = libtoytoolkit.la
++weston_performance_mtk_CFLAGS = $(AM_CFLAGS) $(CLIENT_CFLAGS)
++
+ weston_keyboard_SOURCES = clients/keyboard.c
+ nodist_weston_keyboard_SOURCES =				\
+ 	protocol/weston-desktop-shell-client-protocol.h		\
+@@ -853,6 +866,8 @@ BUILT_SOURCES +=					\
+ 	protocol/linux-dmabuf-unstable-v1-client-protocol.h		\
+ 	protocol/notification-mtk-protocol.c		\
+ 	protocol/notification-mtk-client-protocol.h	\
++	protocol/performance-mtk-protocol.c		\
++	protocol/performance-mtk-client-protocol.h	\
+ 	protocol/weston-configure-mtk-protocol.c		\
+ 	protocol/weston-configure-mtk-client-protocol.h
+ 
+@@ -1448,6 +1463,7 @@ EXTRA_DIST +=					\
+ 	protocol/ivi-application.xml		\
+ 	protocol/ivi-hmi-controller.xml 	\
+ 	protocol/notification-mtk.xml		\
++	protocol/performance-mtk.xml		\
+ 	protocol/weston-configure-mtk.xml
+ 
+ #
+diff --git a/clients/performance-mtk.c b/clients/performance-mtk.c
+new file mode 100644
+index 0000000..dd4ac63
+--- /dev/null
++++ b/clients/performance-mtk.c
+@@ -0,0 +1,511 @@
++/*
++ * Copyright © 2016 Mediatek
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice (including the next
++ * paragraph) shall be included in all copies or substantial portions of the
++ * Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++ * DEALINGS IN THE SOFTWARE.
++ */
++
++#include <config.h>
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdbool.h>
++#include <assert.h>
++#include <unistd.h>
++#include <sys/mman.h>
++#include <signal.h>
++#include <linux/input.h>
++#include <wayland-client.h>
++#include <wayland-cursor.h>
++#include <sys/types.h>
++#include "performance-mtk-client-protocol.h"
++#include "shared/cairo-util.h"
++#include "shared/os-compatibility.h"
++
++#define LINE_MAX 12
++
++struct buffer {
++	struct wl_buffer *buffer;
++	void *shm_data;
++	int busy;
++};
++
++struct window {
++	struct display *display;
++	int width, height;
++	int refresh_time;
++	struct wl_surface *surface;
++	struct buffer buffers[2];
++	struct buffer *prev_buffer;
++
++	struct wl_mtk_performance_panel_surface *panel_surface;
++
++	struct wl_array pre_surfaces_info;
++};
++
++struct mtk_repaint_info {
++	char id_str[32];
++	uint32_t count;
++	uint32_t time;
++};
++
++struct display {
++	struct wl_display *display;
++	struct wl_registry *registry;
++	struct wl_compositor *compositor;
++	struct wl_shm *shm;
++	struct wl_cursor_theme *cursor_theme;
++	struct wl_cursor *default_cursor;
++	struct wl_surface *cursor_surface;
++	struct wl_output *output;
++	struct wl_mtk_performance_panel *mtk_performance_panel;
++	struct window *window;
++};
++
++static int running = 1;
++
++static const double panel_width = 400;
++static const double panel_height = 480;
++
++static void
++buffer_release(void *data, struct wl_buffer *buffer)
++{
++	struct buffer *mybuf = data;
++
++	mybuf->busy = 0;
++}
++
++static const struct wl_buffer_listener buffer_listener = {
++	buffer_release
++};
++
++static int
++create_shm_buffer(struct display *display, struct buffer *buffer,
++		  int width, int height, uint32_t format)
++{
++	struct wl_shm_pool *pool;
++	int fd, size, stride;
++	void *data;
++
++	stride = width * 4;
++	size = stride * height;
++
++	fd = os_create_anonymous_file(size);
++	if (fd < 0) {
++		fprintf(stderr, "creating a buffer file for %d B failed: %m\n",
++			size);
++		return -1;
++	}
++
++	data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++	if (data == MAP_FAILED) {
++		fprintf(stderr, "mmap failed: %m\n");
++		close(fd);
++		return -1;
++	}
++
++	pool = wl_shm_create_pool(display->shm, fd, size);
++	buffer->buffer = wl_shm_pool_create_buffer(pool, 0,
++						   width, height,
++						   stride, format);
++	wl_buffer_add_listener(buffer->buffer, &buffer_listener, buffer);
++	wl_shm_pool_destroy(pool);
++	close(fd);
++
++	buffer->shm_data = data;
++
++	return 0;
++}
++
++static struct buffer *
++window_next_buffer(struct window *window)
++{
++	struct buffer *buffer;
++	int ret = 0;
++
++	if (!window->buffers[0].busy)
++		buffer = &window->buffers[0];
++	else if (!window->buffers[1].busy)
++		buffer = &window->buffers[1];
++	else
++		return NULL;
++
++	if (!buffer->buffer) {
++		ret = create_shm_buffer(window->display, buffer,
++					window->width, window->height,
++					WL_SHM_FORMAT_ARGB8888);
++
++		if (ret < 0)
++			return NULL;
++
++		/* paint the padding */
++		memset(buffer->shm_data, 0xff,
++		       window->width * window->height * 4);
++	}
++
++	return buffer;
++}
++
++static void redraw_line(struct window *window, int line_num, cairo_t *cr,
++			const char *str_title, const char *str_data)
++{
++	cairo_text_extents_t extents;
++
++	cairo_save(cr);
++	cairo_rectangle(cr, 0, line_num* window->height / LINE_MAX,
++					window->width/2, window->height / LINE_MAX);
++	cairo_clip(cr);
++	cairo_text_extents(cr, str_title, &extents);
++	cairo_translate(cr, 0, line_num*window->height /LINE_MAX);
++	cairo_translate(cr, 24,
++			(window->height /LINE_MAX - extents.y_bearing) / 2);
++	cairo_show_text(cr, str_title);
++	cairo_restore(cr);
++
++	cairo_save(cr);
++	cairo_rectangle(cr, window->width/2, line_num* window->height / LINE_MAX,
++					window->width/2, window->height / LINE_MAX);
++	cairo_clip(cr);
++	cairo_text_extents(cr, str_data, &extents);
++	cairo_translate(cr,  window->width/2, line_num*window->height /LINE_MAX);
++	cairo_translate(cr,  window->width/4,
++			(window->height /LINE_MAX - extents.y_bearing) / 2);
++	cairo_show_text(cr, str_data);
++	cairo_restore(cr);
++}
++
++static void
++redraw_panel(struct window *window, struct wl_array * surfaces_info)
++{
++	struct buffer *buffer;
++	cairo_surface_t *surface;
++	cairo_t *cr;
++	struct wl_array * pre_surfaces_info = &window->pre_surfaces_info;
++	struct mtk_repaint_info  *info = NULL;
++	struct mtk_repaint_info  *pre_info = NULL;
++	void *data = NULL;
++	uint32_t increase = 0;
++	int line_num = 0;
++	char fps_buf[128];
++
++	buffer = window_next_buffer(window);
++	if (!buffer) {
++		fprintf(stderr,"Failed to create buffer.\n");
++		abort();
++	}
++
++	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
++					     window->width, window->height);
++
++	cr = cairo_create(surface);
++	cairo_rectangle(cr, 0, 0, window->width, window->height);
++	cairo_clip(cr);
++
++	cairo_select_font_face(cr, "sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
++
++	cairo_translate(cr, 0, 0);
++
++	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
++	cairo_set_source_rgba(cr, 0.5, 0.5, 0.5, 0.5);
++	cairo_rectangle(cr, 0, 0, window->width, window->height);
++	cairo_paint(cr);
++
++	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
++
++	/* Paint title */
++	cairo_set_source_rgb(cr, 0, 0, 0);
++	cairo_set_font_size(cr, 20);
++
++	redraw_line(window, line_num, cr, "Surface Name", "FPS");
++	line_num++;
++
++	/* Paint text */
++	cairo_set_source_rgb(cr, 255, 128, 0);
++	cairo_set_font_size(cr, 20);
++
++	wl_array_for_each(info, surfaces_info) {
++		wl_array_for_each(pre_info, pre_surfaces_info) {
++			if(!strcmp(pre_info->id_str, info->id_str)) {
++				uint32_t interval = info->time - pre_info->time; 
++				if (info->count < pre_info->count)
++					increase = info->count + 0xffffffff - pre_info->count;
++				else
++					increase = info->count - pre_info->count;
++
++				float fps =  (float)(increase * 1000/ interval);
++				sprintf(fps_buf, "%04.2f", fps);
++				redraw_line(window, line_num, cr, info->id_str, fps_buf);
++				line_num++;
++				break;
++			}
++		}
++		if(line_num >= LINE_MAX)
++			break;
++	}
++
++	wl_array_release(pre_surfaces_info);
++	wl_array_init(pre_surfaces_info);
++	wl_array_copy(pre_surfaces_info, surfaces_info);
++
++	cairo_destroy(cr);
++
++	/* update image */
++	data = cairo_image_surface_get_data(surface);
++	memcpy(buffer->shm_data, data, window->width * window->height * 4);
++	cairo_surface_destroy(surface);
++
++	wl_surface_attach(window->surface, buffer->buffer, 0, 0);
++	wl_surface_damage(window->surface, 0, 0,
++					  window->width, window->height);
++	wl_surface_commit(window->surface);
++
++	wl_mtk_performance_panel_commit(window->display->mtk_performance_panel, 1);
++}
++
++static struct window *
++create_window(struct display *display, int width, int height, int refresh_time, int pos)
++{
++	struct window *window;
++
++	window = calloc(1, sizeof *window);
++	if (!window)
++		return NULL;
++
++	display->window = window;
++
++	window->display = display;
++	window->width = width;
++	window->height = height;
++	window->refresh_time = refresh_time;
++	window->surface = wl_compositor_create_surface(display->compositor);
++	window->panel_surface = wl_mtk_performance_panel_get_panel_surface(display->mtk_performance_panel,
++												window->surface);
++
++	wl_mtk_performance_panel_surface_set_toplevel(window->panel_surface,
++					    display->output, pos);
++
++	wl_array_init(&window->pre_surfaces_info);
++
++	return window;
++}
++
++static void
++destroy_window(struct window *window)
++{
++	if (window->buffers[0].buffer)
++		wl_buffer_destroy(window->buffers[0].buffer);
++	if (window->buffers[1].buffer)
++		wl_buffer_destroy(window->buffers[1].buffer);
++
++	if (window->panel_surface)
++		wl_mtk_performance_panel_surface_destroy(window->panel_surface);
++
++	if (window->surface)
++		wl_surface_destroy(window->surface);
++
++	free(window);
++}
++
++static void
++mtk_performance_surfaces_repaint_info_notify(void *data,
++					     struct wl_mtk_performance_panel *wl_mtk_performance_panel,
++					     struct wl_array *surfaces_info)
++{
++	struct display *d = data;
++
++	if (running) {
++		redraw_panel(d->window, surfaces_info);
++		sleep(d->window->refresh_time);
++		wl_mtk_performance_panel_get_surfaces_repaint_info(wl_mtk_performance_panel);
++	}
++}
++
++static const struct wl_mtk_performance_panel_listener mtk_performance_panel_listener = {
++	mtk_performance_surfaces_repaint_info_notify,
++};
++
++static void
++registry_handle_global(void *data, struct wl_registry *registry,
++		       uint32_t id, const char *interface, uint32_t version)
++{
++	struct display *d = data;
++
++	if (strcmp(interface, "wl_compositor") == 0) {
++		d->compositor = wl_registry_bind(registry,
++							id, &wl_compositor_interface, 1);
++	} else if (strcmp(interface, "wl_shm") == 0) {
++		d->shm = wl_registry_bind(registry, id,
++					  &wl_shm_interface, 1);
++		d->cursor_theme = wl_cursor_theme_load(NULL, 32, d->shm);
++		if (!d->cursor_theme) {
++			fprintf(stderr, "unable to load default theme\n");
++			return;
++		}
++		d->default_cursor =
++			wl_cursor_theme_get_cursor(d->cursor_theme, "grabbing");
++		if (!d->default_cursor) {
++			fprintf(stderr, "unable to load default left pointer\n");
++			// TODO: abort ?
++		}
++	} else if (strcmp(interface, "wl_output") == 0) {
++		d->output = wl_registry_bind(registry, id,
++						&wl_output_interface, 2);
++	} else if (!strcmp(interface, "wl_mtk_performance_panel")) {
++		d->mtk_performance_panel = wl_registry_bind(registry, id,
++				     &wl_mtk_performance_panel_interface, 1);
++		wl_mtk_performance_panel_add_listener(d->mtk_performance_panel,
++						&mtk_performance_panel_listener, d);
++	}
++}
++
++static void
++registry_handle_global_remove(void *data, struct wl_registry *registry,
++			      uint32_t name)
++{
++}
++
++static const struct wl_registry_listener registry_listener = {
++	registry_handle_global,
++	registry_handle_global_remove
++};
++
++static struct display *
++create_display(void)
++{
++	struct display *display;
++
++	display = malloc(sizeof *display);
++	if (display == NULL) {
++		fprintf(stderr, "out of memory\n");
++		exit(1);
++	}
++	display->display = wl_display_connect(NULL);
++	assert(display->display);
++
++	display->registry = wl_display_get_registry(display->display);
++	wl_registry_add_listener(display->registry,
++				 &registry_listener, display);
++	wl_display_roundtrip(display->display);
++	if (display->shm == NULL) {
++		fprintf(stderr, "No wl_shm global\n");
++		exit(1);
++	}
++
++	wl_display_roundtrip(display->display);
++
++	display->cursor_surface =
++		wl_compositor_create_surface(display->compositor);
++
++	return display;
++}
++
++static void
++destroy_display(struct display *display)
++{
++	if (display->shm)
++		wl_shm_destroy(display->shm);
++
++	if (display->compositor)
++		wl_compositor_destroy(display->compositor);
++
++	if (display->output)
++		wl_output_destroy(display->output);
++
++	if (display->mtk_performance_panel)
++		wl_mtk_performance_panel_destroy(display->mtk_performance_panel);
++
++	if (display->cursor_surface)
++		wl_surface_destroy(display->cursor_surface);
++
++	if (display->cursor_theme)
++		wl_cursor_theme_destroy(display->cursor_theme);
++
++	wl_registry_destroy(display->registry);
++	wl_display_flush(display->display);
++	wl_display_disconnect(display->display);
++	free(display);
++}
++
++static void
++signal_int(int signum)
++{
++	running = 0;
++}
++
++int
++main(int argc, char **argv)
++{
++	struct sigaction sigint;
++	struct sigaction sigkill;
++	struct sigaction sigterm;
++	struct display *display;
++	struct window *window;
++	int ret = 0;
++	int cal_time = 1;
++	int pos = 4;
++
++	if (argc >= 2)
++		cal_time = atoi(argv[1]);
++
++	if (argc >= 3)
++		pos = atoi(argv[2]);
++
++	display = create_display();
++
++	if(!display->mtk_performance_panel){
++		fprintf(stderr, "No wl_mtk_performance_panel\n");
++		return 1;
++	}
++
++	window = create_window(display, panel_width, panel_height, cal_time, pos);
++	if (!window)
++		return 1;
++
++	sigint.sa_handler = signal_int;
++	sigemptyset(&sigint.sa_mask);
++	sigint.sa_flags = SA_RESETHAND;
++	sigaction(SIGINT, &sigint, NULL);
++
++	sigkill.sa_handler = signal_int;
++	sigemptyset(&sigkill.sa_mask);
++	sigkill.sa_flags = SA_RESETHAND;
++	sigaction(SIGKILL, &sigkill, NULL);
++
++	sigterm.sa_handler = signal_int;
++	sigemptyset(&sigterm.sa_mask);
++	sigterm.sa_flags = SA_RESETHAND;
++	sigaction(SIGTERM, &sigterm, NULL);
++
++	wl_mtk_performance_panel_get_surfaces_repaint_info(display->mtk_performance_panel);
++
++	while (running && ret != -1)
++		ret = wl_display_dispatch(display->display);
++
++	fprintf(stderr, "mtk_performance-shm exiting running %d ret %d \n", running, ret);
++
++	wl_mtk_performance_panel_commit(display->mtk_performance_panel, 0);
++
++	wl_display_roundtrip(display->display);
++
++	destroy_window(window);
++	destroy_display(display);
++
++	return 0;
++}
+diff --git a/protocol/performance-mtk.xml b/protocol/performance-mtk.xml
+new file mode 100644
+index 0000000..8634a70
+--- /dev/null
++++ b/protocol/performance-mtk.xml
+@@ -0,0 +1,67 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<protocol name="mtk_performance_panel">
++
++  <copyright>
++    Copyright (c) 2016 MediaTek
++
++    Permission is hereby granted, free of charge, to any person obtaining a
++    copy of this software and associated documentation files (the "Software"),
++    to deal in the Software without restriction, including without limitation
++    the rights to use, copy, modify, merge, publish, distribute, sublicense,
++    and/or sell copies of the Software, and to permit persons to whom the
++    Software is furnished to do so, subject to the following conditions:
++
++    The above copyright notice and this permission notice (including the next
++    paragraph) shall be included in all copies or substantial portions of the
++    Software.
++
++    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++    DEALINGS IN THE SOFTWARE.
++  </copyright>
++
++  <interface name="wl_mtk_performance_panel" version="1">
++
++    <description summary="interface for implementing mediatek performance tool">
++      Only one client can bind this interface at a time.
++    </description>
++
++    <request name="get_panel_surface">
++      <arg name="id" type="new_id" interface="wl_mtk_performance_panel_surface"/>
++      <arg name="surface" type="object" interface="wl_surface"/>
++    </request>
++
++    <request name="get_surfaces_repaint_info">
++      <description summary="trigger a signal to get surfaces repaint information">
++        Trigger a signal to get surfaces repaint information.
++      </description>
++    </request>
++
++    <request name="commit">
++      <description summary="commit information and display">
++        Commit information and display.
++      </description>
++	  <arg name="status" type="uint"/>
++    </request>
++
++    <event name="surfaces_repaint_info_notify">
++	  <arg name="surfaces_info" type="array"/>
++    </event>
++  </interface>
++
++  <interface name="wl_mtk_performance_panel_surface" version="1">
++
++    <request name="set_toplevel">
++      <description summary="set the panel surface type">
++        Set notification panel show type.
++      </description>
++      <arg name="output" type="object" interface="wl_output"/>
++      <arg name="position" type="uint"/>
++    </request>
++  </interface>
++
++</protocol>
+diff --git a/src/compositor.c b/src/compositor.c
+index eb16379..cc96fef 100644
+--- a/src/compositor.c
++++ b/src/compositor.c
+@@ -2916,6 +2916,8 @@ weston_surface_commit_state(struct weston_surface *surface,
+ static void
+ weston_surface_commit(struct weston_surface *surface)
+ {
++	surface->repaint_count ++;
++
+ 	weston_surface_commit_state(surface, &surface->pending);
+ 
+ 	weston_surface_commit_subsurface_order(surface);
+@@ -4755,6 +4757,9 @@ weston_compositor_create(struct wl_display *display, void *user_data)
+ 	weston_compositor_add_debug_binding(ec, KEY_T,
+ 					    timeline_key_binding_handler, ec);
+ 
++	if (mtk_performance_panel_setup(ec) < 0)
++		goto fail;
++
+ 	return ec;
+ 
+ fail:
+@@ -4978,6 +4983,8 @@ weston_compositor_destroy(struct weston_compositor *compositor)
+ 	/* prevent further rendering while shutting down */
+ 	compositor->state = WESTON_COMPOSITOR_OFFSCREEN;
+ 
++	mtk_performance_panel_destroy(compositor);
++
+ 	wl_signal_emit(&compositor->destroy_signal, compositor);
+ 
+ 	weston_compositor_xkb_destroy(compositor);
+diff --git a/src/compositor.h b/src/compositor.h
+index 99b2fe4..db439ae 100644
+--- a/src/compositor.h
++++ b/src/compositor.h
+@@ -810,8 +810,15 @@ struct weston_compositor {
+ 	int session_active;
+ 
+ 	struct weston_layer fade_layer;
++	struct weston_layer mtk_performance_panel_layer;
+ 	struct weston_layer cursor_layer;
+ 
++	bool showing_mtk_performance_panels;
++	struct {
++		struct wl_resource *binding;
++		void *surfaces;
++	} mtk_performance_panel;
++
+ 	struct wl_list output_list;
+ 	struct wl_list seat_list;
+ 	struct wl_list layer_list;
+@@ -1093,6 +1100,8 @@ struct weston_surface {
+ 
+ 	struct wl_list views;
+ 
++	uint32_t repaint_count;
++
+ 	/*
+ 	 * Which output to vsync this surface to.
+ 	 * Used to determine whether to send or queue frame events, and for
+@@ -1810,6 +1819,12 @@ weston_seat_get_pointer(struct weston_seat *seat);
+ struct weston_touch *
+ weston_seat_get_touch(struct weston_seat *seat);
+ 
++int
++mtk_performance_panel_setup(struct weston_compositor *ec);
++
++void
++mtk_performance_panel_destroy(struct weston_compositor *ec);
++
+ #ifdef  __cplusplus
+ }
+ #endif
+diff --git a/src/performance-panel-ivi-mtk.c b/src/performance-panel-ivi-mtk.c
+new file mode 100644
+index 0000000..0cb7b61
+--- /dev/null
++++ b/src/performance-panel-ivi-mtk.c
+@@ -0,0 +1,400 @@
++/*
++ * Copyright © 2016 MediaTek
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining
++ * a copy of this software and associated documentation files (the
++ * "Software"), to deal in the Software without restriction, including
++ * without limitation the rights to use, copy, modify, merge, publish,
++ * distribute, sublicense, and/or sell copies of the Software, and to
++ * permit persons to whom the Software is furnished to do so, subject to
++ * the following conditions:
++ *
++ * The above copyright notice and this permission notice (including the
++ * next paragraph) shall be included in all copies or substantial
++ * portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ */
++
++#include "config.h"
++
++#include <stdlib.h>
++#include <stdio.h>
++#include <string.h>
++
++//#include "ivi-shell.h"
++#include "compositor.h"
++#include "performance-mtk-server-protocol.h"
++//#include "ivi-layout-private.h"
++#include "shared/helpers.h"
++
++struct mtk_repaint_info {
++	char id_str[32];
++	uint32_t count;
++	uint32_t time;
++};
++
++struct mtk_performance_panel_surface {
++	struct wl_resource *resource;
++	struct wl_signal destroy_signal;
++
++	struct weston_compositor *ec;
++
++	struct ivi_shell *shell;
++
++	struct weston_surface *surface;
++	struct weston_view *view;
++	struct wl_listener surface_destroy_listener;
++
++	struct weston_output *output;
++	uint32_t panel;
++};
++
++static void
++show_mtk_performance_panel_surface(struct mtk_performance_panel_surface *ipsurf)
++{
++	struct weston_compositor *ec = ipsurf->ec;
++	float x, y;
++
++	if(ipsurf->panel == 0) {
++		x = ipsurf->output->x + (ipsurf->output->width -  ipsurf->surface->width) / 2;
++		y = ipsurf->output->y + (ipsurf->output->height -  ipsurf->surface->height) / 2;
++	} else if (ipsurf->panel == 1) {
++		x = ipsurf->output->x;
++		y = ipsurf->output->y;
++	} else if (ipsurf->panel == 2) {
++		x = ipsurf->output->x + ipsurf->output->width -  ipsurf->surface->width - 1;
++		y = ipsurf->output->y;
++	} else if (ipsurf->panel == 3) {
++		x = ipsurf->output->x;
++		y = ipsurf->output->y + ipsurf->output->height -  ipsurf->surface->height - 1;
++	} else if (ipsurf->panel == 4) {
++		x = ipsurf->output->x + ipsurf->output->width -  ipsurf->surface->width - 1;
++		y = ipsurf->output->y + ipsurf->output->height -  ipsurf->surface->height - 1;
++	} else {
++		x = ipsurf->output->x + (ipsurf->output->width -  ipsurf->surface->width) / 2;
++		y = ipsurf->output->y + (ipsurf->output->height -  ipsurf->surface->height) / 2;
++	}
++	weston_view_set_position(ipsurf->view, x, y);
++
++	weston_layer_entry_insert(&ec->mtk_performance_panel_layer.view_list,
++	                          &ipsurf->view->layer_link);
++	weston_view_geometry_dirty(ipsurf->view);
++	weston_view_update_transform(ipsurf->view);
++	weston_surface_damage(ipsurf->surface);
++}
++
++static void
++show_mtk_performance_panels(struct weston_compositor *ec)
++{
++	struct mtk_performance_panel_surface *ipsurf;
++
++	if (ec->showing_mtk_performance_panels)
++		return;
++
++	ipsurf = ec->mtk_performance_panel.surfaces;
++
++	ec->showing_mtk_performance_panels = true;
++
++	wl_list_insert(&ec->cursor_layer.link,
++			       &ec->mtk_performance_panel_layer.link);
++
++	if(NULL != ipsurf) {
++		show_mtk_performance_panel_surface(ipsurf);
++	}
++}
++
++static void
++hide_mtk_performance_panels(struct weston_compositor *ec)
++{
++	struct weston_view *view, *next;
++
++	if (!ec->showing_mtk_performance_panels)
++		return;
++
++	ec->showing_mtk_performance_panels = false;
++
++	wl_list_remove(&ec->mtk_performance_panel_layer.link);
++
++	wl_list_for_each_safe(view, next,
++			      &ec->mtk_performance_panel_layer.view_list.link,
++			      layer_link.link)
++		weston_view_unmap(view);
++}
++
++static void
++mtk_performance_panel_configure(struct weston_surface *surface, int32_t sx, int32_t sy)
++{
++	struct mtk_performance_panel_surface *ip_surface = surface->configure_private;
++	struct weston_compositor *ec = ip_surface->ec;
++	float x, y;
++
++	if(ip_surface->panel == 0) {
++		x = ip_surface->output->x + (ip_surface->output->width - surface->width) / 2;
++		y = ip_surface->output->y + (ip_surface->output->height - surface->height) / 2;
++	} else if (ip_surface->panel == 1) {
++		x = ip_surface->output->x;
++		y = ip_surface->output->y;
++	} else if (ip_surface->panel == 2) {
++		x = ip_surface->output->x + ip_surface->output->width - surface->width - 1;
++		y = ip_surface->output->y;
++	} else if (ip_surface->panel == 3) {
++		x = ip_surface->output->x;
++		y = ip_surface->output->y + ip_surface->output->height - surface->height - 1;
++	} else if (ip_surface->panel == 4) {
++		x = ip_surface->output->x + ip_surface->output->width - surface->width - 1;
++		y = ip_surface->output->y + ip_surface->output->height - surface->height - 1;
++	} else {
++		x = ip_surface->output->x + (ip_surface->output->width - surface->width) / 2;
++		y = ip_surface->output->y + (ip_surface->output->height - surface->height) / 2;
++	}
++
++	weston_view_set_position(ip_surface->view, x, y);
++
++	if (!weston_surface_is_mapped(surface) && ec->showing_mtk_performance_panels)
++		show_mtk_performance_panel_surface(ip_surface);
++}
++
++static void
++destroy_mtk_performance_panel_surface(struct mtk_performance_panel_surface *mtk_performance_panel_surface)
++{
++	wl_signal_emit(&mtk_performance_panel_surface->destroy_signal, mtk_performance_panel_surface);
++
++	wl_list_remove(&mtk_performance_panel_surface->surface_destroy_listener.link);
++
++	mtk_performance_panel_surface->surface->configure = NULL;
++	weston_view_destroy(mtk_performance_panel_surface->view);
++
++	free(mtk_performance_panel_surface);
++}
++
++static struct mtk_performance_panel_surface *
++get_mtk_performance_panel_surface(struct weston_surface *surface)
++{
++	if (surface->configure == mtk_performance_panel_configure) {
++		return surface->configure_private;
++	} else {
++		return NULL;
++	}
++}
++
++static void
++mtk_performance_panel_handle_surface_destroy(struct wl_listener *listener, void *data)
++{
++	struct mtk_performance_panel_surface *ipsurface = container_of(listener,
++							     struct mtk_performance_panel_surface,
++							     surface_destroy_listener);
++
++	if (ipsurface->resource) {
++		wl_resource_destroy(ipsurface->resource);
++	} else {
++		ipsurface->ec->showing_mtk_performance_panels = false;
++		destroy_mtk_performance_panel_surface(ipsurface);
++	}
++}
++
++static struct mtk_performance_panel_surface *
++create_mtk_performance_panel_surface(struct weston_compositor *ec,
++			   struct weston_surface *surface)
++{
++	struct mtk_performance_panel_surface *mtk_performance_panel_surface;
++
++	mtk_performance_panel_surface = calloc(1, sizeof *mtk_performance_panel_surface);
++	if (!mtk_performance_panel_surface)
++		return NULL;
++
++	surface->configure = mtk_performance_panel_configure;
++	surface->configure_private = mtk_performance_panel_surface;
++
++	mtk_performance_panel_surface->ec = ec;
++
++	mtk_performance_panel_surface->surface = surface;
++	mtk_performance_panel_surface->view = weston_view_create(surface);
++
++	wl_signal_init(&mtk_performance_panel_surface->destroy_signal);
++	mtk_performance_panel_surface->surface_destroy_listener.notify =
++			mtk_performance_panel_handle_surface_destroy;
++	wl_signal_add(&surface->destroy_signal,
++		      &mtk_performance_panel_surface->surface_destroy_listener);
++
++	return mtk_performance_panel_surface;
++}
++
++static void
++mtk_performance_panel_surface_set_toplevel(struct wl_client *client,
++				 struct wl_resource *resource,
++				 struct wl_resource *output_resource,
++				 uint32_t position)
++{
++	struct mtk_performance_panel_surface *mtk_performance_panel_surface =
++		wl_resource_get_user_data(resource);
++	struct weston_compositor *ec = mtk_performance_panel_surface->ec;
++
++	ec->mtk_performance_panel.surfaces = mtk_performance_panel_surface;
++
++	mtk_performance_panel_surface->output = wl_resource_get_user_data(output_resource);
++	mtk_performance_panel_surface->panel = position;
++}
++
++static const struct wl_mtk_performance_panel_surface_interface mtk_performance_panel_surface_implementation = {
++	mtk_performance_panel_surface_set_toplevel
++};
++
++static void
++destroy_mtk_performance_panel_surface_resource(struct wl_resource *resource)
++{
++	struct mtk_performance_panel_surface *ipsurf =
++		wl_resource_get_user_data(resource);
++
++	ipsurf->ec->showing_mtk_performance_panels = false;
++	destroy_mtk_performance_panel_surface(ipsurf);
++}
++
++static void
++mtk_performance_panel_get_panel_surface(struct wl_client *client,
++		struct wl_resource *resource,
++		uint32_t id,
++		struct wl_resource *surface_resource)
++{
++	struct weston_surface *surface =
++		wl_resource_get_user_data(surface_resource);
++	struct weston_compositor *ec = wl_resource_get_user_data(resource);
++	struct mtk_performance_panel_surface *ipsurf;
++
++	if (get_mtk_performance_panel_surface(surface)) {
++		wl_resource_post_error(surface_resource,
++				       WL_DISPLAY_ERROR_INVALID_OBJECT,
++				       "wl_mtk_performance_panel::get_mtk_performance_panel_surface already requested");
++		return;
++	}
++
++	ipsurf = create_mtk_performance_panel_surface(ec, surface);
++	if (!ipsurf) {
++		wl_resource_post_error(surface_resource,
++				       WL_DISPLAY_ERROR_INVALID_OBJECT,
++				       "surface->configure already set");
++		return;
++	}
++
++	ipsurf->resource =
++		wl_resource_create(client,
++				   &wl_mtk_performance_panel_surface_interface, 1, id);
++	wl_resource_set_implementation(ipsurf->resource,
++				       &mtk_performance_panel_surface_implementation,
++				       ipsurf,
++				       destroy_mtk_performance_panel_surface_resource);
++}
++
++static void
++mtk_performance_panel_get_surfaces_repaint_info(struct wl_client *client,
++		struct wl_resource *resource)
++{
++	struct weston_view *ev, *next;
++	struct weston_output *output;
++	struct weston_compositor *ec = wl_resource_get_user_data(resource);
++	struct mtk_performance_panel_surface *ipsurf = NULL;
++	struct mtk_repaint_info * info;
++	struct wl_array repaint_info;
++
++	wl_array_init(&repaint_info);
++
++	ipsurf = ec->mtk_performance_panel.surfaces;
++	/* the first several elements are output refresh num(every commit to drm, count increase 1) */
++	wl_list_for_each(output, &ec->output_list, link) {
++		info = wl_array_add(&repaint_info, sizeof *info);
++
++		info->time = weston_compositor_get_time();
++		info->count = (uint32_t)(output->msc & 0xffffffff);
++		snprintf(info->id_str, 32, "output_%s_", output->name, output->id);
++	}
++
++	wl_list_for_each_safe(ev, next, &ec->view_list, link) {
++		struct weston_surface *es = ev->surface;
++		info = wl_array_add(&repaint_info, sizeof *info);
++
++		info->time = weston_compositor_get_time();
++		info->count = es->repaint_count;
++		es->get_label(es, info->id_str, 32);
++	}
++
++	wl_mtk_performance_panel_send_surfaces_repaint_info_notify(resource, &repaint_info);
++
++	wl_array_release(&repaint_info);
++}
++
++static void
++mtk_performance_panel_commit(struct wl_client *client,
++		struct wl_resource *resource,
++		uint32_t status)
++{
++	struct weston_compositor *ec = wl_resource_get_user_data(resource);
++
++	hide_mtk_performance_panels(ec);
++
++	if(status !=0)
++		show_mtk_performance_panels(ec);
++}
++
++static const struct wl_mtk_performance_panel_interface mtk_performance_panel_implementation = {
++	mtk_performance_panel_get_panel_surface,
++	mtk_performance_panel_get_surfaces_repaint_info,
++	mtk_performance_panel_commit,
++};
++
++static void
++unbind_mtk_performance_panel(struct wl_resource *resource)
++{
++	struct weston_compositor *ec = wl_resource_get_user_data(resource);
++
++	ec->mtk_performance_panel.binding = NULL;
++}
++
++static void
++bind_mtk_performance_panel(struct wl_client *client,
++             void *data, uint32_t version, uint32_t id)
++{
++	struct weston_compositor *ec = data;
++	struct wl_resource *resource;
++
++	resource = wl_resource_create(client,
++				      &wl_mtk_performance_panel_interface, 1, id);
++
++	if (ec->mtk_performance_panel.binding == NULL) {
++		wl_resource_set_implementation(resource,
++					       &mtk_performance_panel_implementation,
++					       ec, unbind_mtk_performance_panel);
++		ec->mtk_performance_panel.binding = resource;
++		return;
++	}
++
++	wl_resource_post_error(resource, WL_DISPLAY_ERROR_INVALID_OBJECT,
++			       "interface object already bound");
++}
++
++void
++mtk_performance_panel_destroy(struct weston_compositor *ec)
++{
++
++}
++
++int
++mtk_performance_panel_setup(struct weston_compositor *ec)
++{
++	ec->mtk_performance_panel.surfaces = NULL;
++	ec->showing_mtk_performance_panels = false;
++	weston_layer_init(&ec->mtk_performance_panel_layer, NULL);
++
++	if (wl_global_create(ec->wl_display,
++			     &wl_mtk_performance_panel_interface, 1,
++			     ec, bind_mtk_performance_panel) == NULL)
++		return -1;
++
++	return 0;
++}
+-- 
+1.9.1
+

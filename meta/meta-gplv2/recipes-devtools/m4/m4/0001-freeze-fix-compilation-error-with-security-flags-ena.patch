@@ -1,0 +1,35 @@
+From 5f07971ef7f087500f19beb778ff1c8fb176d76d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Andr=C3=A9=20Draszik?= <adraszik@tycoint.com>
+Date: Thu, 23 Mar 2017 12:23:24 +0000
+Subject: [PATCH 1/2] freeze: fix compilation error with security flags enabled
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+| ../../m4-1.4.9/src/freeze.c: In function 'produce_frozen_state':
+| ../../m4-1.4.9/src/freeze.c:61:7: error: format not a string literal and no format arguments [-Werror=format-security]
+|        M4ERROR ((warning_status, errno, name));
+|        ^~~~~~~
+
+Upstream-Status: Inappropriate [required for m4 1.4.9 (GPLv2) recipe only]
+Signed-off-by: André Draszik <adraszik@tycoint.com>
+---
+ src/freeze.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/freeze.c b/src/freeze.c
+index 7b8a7bc..eebcc59 100644
+--- a/src/freeze.c
++++ b/src/freeze.c
+@@ -58,7 +58,7 @@ produce_frozen_state (const char *name)
+ 
+   if (file = fopen (name, O_BINARY ? "wb" : "w"), !file)
+     {
+-      M4ERROR ((warning_status, errno, name));
++      M4ERROR ((warning_status, errno, "fopen failed: %s", name));
+       return;
+     }
+ 
+-- 
+2.11.0
+

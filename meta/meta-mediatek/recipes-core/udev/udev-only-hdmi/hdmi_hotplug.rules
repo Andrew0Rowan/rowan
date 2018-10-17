@@ -1,0 +1,1 @@
+ACTION=="change", KERNEL=="card0", SUBSYSTEM=="drm", RUN+="/etc/udev/scripts/hdmi_hotplug.sh"

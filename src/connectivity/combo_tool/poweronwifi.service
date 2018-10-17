@@ -1,0 +1,12 @@
+[Unit]
+Description=power on wifi Daemon
+After=wmtd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+ExecStart=/usr/bin/power_on_wifi
+
+[Install]
+Alias=pwrwifid
+WantedBy=multi-user.target

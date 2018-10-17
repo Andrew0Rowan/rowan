@@ -1,0 +1,45 @@
+From 76db00965537d0b8ae45850f24a153d43d2b8ab6 Mon Sep 17 00:00:00 2001
+From: Changtao Hu <changtao.hu@mediatek.com>
+Date: Thu, 22 Jun 2017 09:24:02 +0800
+Subject: [PATCH] gstreamer upgrade: remove invalid framerate field
+
+Make patch for gstreamer upgrade
+Test: OK
+
+Signed-off-by: Changtao Hu <changtao.hu@mediatek.com>
+CR-Id: AUTO00005189
+---
+ gst-libs/gst/video/gstvideoutilsprivate.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/gst-libs/gst/video/gstvideoutilsprivate.c b/gst-libs/gst/video/gstvideoutilsprivate.c
+index e5e7c2d..cbddaf1 100644
+--- a/gst-libs/gst/video/gstvideoutilsprivate.c
++++ b/gst-libs/gst/video/gstvideoutilsprivate.c
+@@ -131,10 +131,23 @@ __gst_video_element_proxy_getcaps (GstElement * element, GstPad * sinkpad,
+   gst_caps_unref (templ_caps);
+ 
+   if (filter) {
++    GstStructure *filter_st = NULL;
++
+     GST_LOG_OBJECT (element, "intersecting with %" GST_PTR_FORMAT, filter);
+     filter_caps = gst_caps_intersect (fcaps, filter);
+     gst_caps_unref (fcaps);
+     fcaps = filter_caps;
++
++	filter_st = gst_caps_get_structure (filter, 0);
++	if (!gst_structure_has_field (filter_st, "framerate")) {
++	  GstStructure *fcaps_st = NULL;
++
++	  fcaps_st =  gst_caps_get_structure (fcaps, 0);
++	  gst_structure_remove_field (fcaps_st, "framerate");
++	  fcaps_st = NULL;
++	}
++
++	filter_st = NULL;
+   }
+ 
+ done:
+-- 
+1.9.1
+

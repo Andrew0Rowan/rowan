@@ -1,0 +1,244 @@
+msmtp: fixup api and compiler warnings
+
+Upstream-Status: Inappropriate [upstream rewrote with GPLv3]
+
+Author: Morgan Little <morgan.little@windriver.com>
+Signed-off-by: Jackie Huang <jackie.huang@windriver.com>
+
+diff -Naur msmtp-1.4.12.orig/configure.ac msmtp-1.4.12/configure.ac
+--- msmtp-1.4.12.orig/configure.ac
++++ msmtp-1.4.12/configure.ac
+@@ -40,8 +40,8 @@
+ dnl System
+ case "${target}" in *-*-mingw32*) windows=yes ;; *) windows=no ;; esac
+ 
+-dnl gnulib 
+-gl_INIT
++#dnl gnulib 
++#gl_INIT
+ 
+ dnl Gettext
+ AM_GNU_GETTEXT([external])
+diff -Naur msmtp-1.4.12.orig/gnulib/base64.c msmtp-1.4.12/gnulib/base64.c
+--- msmtp-1.4.12.orig/gnulib/base64.c
++++ msmtp-1.4.12/gnulib/base64.c
+@@ -64,8 +64,8 @@
+    possible.  If OUTLEN is larger than BASE64_LENGTH(INLEN), also zero
+    terminate the output buffer. */
+ void
+-base64_encode (const char *restrict in, size_t inlen,
+-	       char *restrict out, size_t outlen)
++base64_encode (const char *in, size_t inlen,
++	       char *out, size_t outlen)
+ {
+   static const char b64str[64] =
+     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+@@ -310,8 +310,8 @@
+    that, when applicable, you must remove any line terminators that is
+    part of the data stream before calling this function.  */
+ bool
+-base64_decode (const char *restrict in, size_t inlen,
+-	       char *restrict out, size_t *outlen)
++base64_decode (const char *in, size_t inlen,
++	       char *out, size_t *outlen)
+ {
+   size_t outleft = *outlen;
+ 
+diff -Naur msmtp-1.4.12.orig/gnulib/base64.h msmtp-1.4.12/gnulib/base64.h
+--- msmtp-1.4.12.orig/gnulib/base64.h
++++ msmtp-1.4.12/gnulib/base64.h
+@@ -31,13 +31,13 @@
+ 
+ extern bool isbase64 (char ch);
+ 
+-extern void base64_encode (const char *restrict in, size_t inlen,
+-			   char *restrict out, size_t outlen);
++extern void base64_encode (const char *in, size_t inlen,
++			   char *out, size_t outlen);
+ 
+ extern size_t base64_encode_alloc (const char *in, size_t inlen, char **out);
+ 
+-extern bool base64_decode (const char *restrict in, size_t inlen,
+-			   char *restrict out, size_t *outlen);
++extern bool base64_decode (const char *in, size_t inlen,
++			   char *out, size_t *outlen);
+ 
+ extern bool base64_decode_alloc (const char *in, size_t inlen,
+ 				 char **out, size_t *outlen);
+diff -Naur msmtp-1.4.12.orig/gnulib/Makefile.am msmtp-1.4.12/gnulib/Makefile.am
+--- msmtp-1.4.12.orig/gnulib/Makefile.am
++++ msmtp-1.4.12/gnulib/Makefile.am
+@@ -59,20 +59,18 @@
+ 
+ ## begin gnulib module crypto/hmac-md5
+ 
++libgnu_a_SOURCES += hmac-md5.c
+ 
+ EXTRA_DIST += hmac-md5.c hmac.h
+ 
+-EXTRA_libgnu_a_SOURCES += hmac-md5.c
+-
+ ## end   gnulib module crypto/hmac-md5
+ 
+ ## begin gnulib module crypto/md5
+ 
++libgnu_a_SOURCES += md5.c
+ 
+ EXTRA_DIST += md5.c md5.h
+ 
+-EXTRA_libgnu_a_SOURCES += md5.c
+-
+ ## end   gnulib module crypto/md5
+ 
+ ## begin gnulib module getdelim
+@@ -149,11 +147,10 @@
+ 
+ ## begin gnulib module memxor
+ 
++libgnu_a_SOURCES += memxor.c
+ 
+ EXTRA_DIST += memxor.c memxor.h
+ 
+-EXTRA_libgnu_a_SOURCES += memxor.c
+-
+ ## end   gnulib module memxor
+ 
+ ## begin gnulib module size_max
+@@ -219,47 +216,6 @@
+ 
+ ## end   gnulib module stdint
+ 
+-## begin gnulib module stdio
+-
+-BUILT_SOURCES += stdio.h
+-
+-# We need the following in order to create <stdio.h> when the system
+-# doesn't have one that works with the given compiler.
+-stdio.h: stdio_.h
+-	rm -f $@-t $@
+-	{ echo '/* DO NOT EDIT! GENERATED AUTOMATICALLY! */' && \
+-	  sed -e 's|@''ABSOLUTE_STDIO_H''@|$(ABSOLUTE_STDIO_H)|g' \
+-	      -e 's|@''GNULIB_FPRINTF_POSIX''@|$(GNULIB_FPRINTF_POSIX)|g' \
+-	      -e 's|@''GNULIB_PRINTF_POSIX''@|$(GNULIB_PRINTF_POSIX)|g' \
+-	      -e 's|@''GNULIB_SNPRINTF''@|$(GNULIB_SNPRINTF)|g' \
+-	      -e 's|@''GNULIB_SPRINTF_POSIX''@|$(GNULIB_SPRINTF_POSIX)|g' \
+-	      -e 's|@''GNULIB_VFPRINTF_POSIX''@|$(GNULIB_VFPRINTF_POSIX)|g' \
+-	      -e 's|@''GNULIB_VPRINTF_POSIX''@|$(GNULIB_VPRINTF_POSIX)|g' \
+-	      -e 's|@''GNULIB_VSNPRINTF''@|$(GNULIB_VSNPRINTF)|g' \
+-	      -e 's|@''GNULIB_VSPRINTF_POSIX''@|$(GNULIB_VSPRINTF_POSIX)|g' \
+-	      -e 's|@''GNULIB_VASPRINTF''@|$(GNULIB_VASPRINTF)|g' \
+-	      -e 's|@''REPLACE_FPRINTF''@|$(REPLACE_FPRINTF)|g' \
+-	      -e 's|@''REPLACE_VFPRINTF''@|$(REPLACE_VFPRINTF)|g' \
+-	      -e 's|@''REPLACE_PRINTF''@|$(REPLACE_PRINTF)|g' \
+-	      -e 's|@''REPLACE_VPRINTF''@|$(REPLACE_VPRINTF)|g' \
+-	      -e 's|@''REPLACE_SNPRINTF''@|$(REPLACE_SNPRINTF)|g' \
+-	      -e 's|@''HAVE_DECL_SNPRINTF''@|$(HAVE_DECL_SNPRINTF)|g' \
+-	      -e 's|@''REPLACE_VSNPRINTF''@|$(REPLACE_VSNPRINTF)|g' \
+-	      -e 's|@''HAVE_DECL_VSNPRINTF''@|$(HAVE_DECL_VSNPRINTF)|g' \
+-	      -e 's|@''REPLACE_SPRINTF''@|$(REPLACE_SPRINTF)|g' \
+-	      -e 's|@''REPLACE_VSPRINTF''@|$(REPLACE_VSPRINTF)|g' \
+-	      -e 's|@''HAVE_VASPRINTF''@|$(HAVE_VASPRINTF)|g' \
+-	      -e 's|@''REPLACE_VASPRINTF''@|$(REPLACE_VASPRINTF)|g' \
+-	      -e '/definition of GL_LINK_WARNING/r $(LINK_WARNING_H)' \
+-	      < $(srcdir)/stdio_.h; \
+-	} > $@-t
+-	mv $@-t $@
+-MOSTLYCLEANFILES += stdio.h stdio.h-t
+-
+-EXTRA_DIST += stdio_.h
+-
+-## end   gnulib module stdio
+-
+ ## begin gnulib module sys_socket
+ 
+ BUILT_SOURCES += $(SYS_SOCKET_H)
+@@ -302,40 +258,6 @@
+ 
+ ## end   gnulib module sysexits
+ 
+-## begin gnulib module unistd
+-
+-BUILT_SOURCES += unistd.h
+-
+-# We need the following in order to create an empty placeholder for
+-# <unistd.h> when the system doesn't have one.
+-unistd.h: unistd_.h
+-	rm -f $@-t $@
+-	{ echo '/* DO NOT EDIT! GENERATED AUTOMATICALLY! */'; \
+-	  sed -e 's|@''HAVE_UNISTD_H''@|$(HAVE_UNISTD_H)|g' \
+-	      -e 's|@''ABSOLUTE_UNISTD_H''@|$(ABSOLUTE_UNISTD_H)|g' \
+-	      -e 's|@''GNULIB_CHOWN''@|$(GNULIB_CHOWN)|g' \
+-	      -e 's|@''GNULIB_DUP2''@|$(GNULIB_DUP2)|g' \
+-	      -e 's|@''GNULIB_FCHDIR''@|$(GNULIB_FCHDIR)|g' \
+-	      -e 's|@''GNULIB_FTRUNCATE''@|$(GNULIB_FTRUNCATE)|g' \
+-	      -e 's|@''GNULIB_GETCWD''@|$(GNULIB_GETCWD)|g' \
+-	      -e 's|@''GNULIB_GETLOGIN_R''@|$(GNULIB_GETLOGIN_R)|g' \
+-	      -e 's|@''GNULIB_READLINK''@|$(GNULIB_READLINK)|g' \
+-	      -e 's|@''HAVE_DUP2''@|$(HAVE_DUP2)|g' \
+-	      -e 's|@''HAVE_FTRUNCATE''@|$(HAVE_FTRUNCATE)|g' \
+-	      -e 's|@''HAVE_READLINK''@|$(HAVE_READLINK)|g' \
+-	      -e 's|@''HAVE_DECL_GETLOGIN_R''@|$(HAVE_DECL_GETLOGIN_R)|g' \
+-	      -e 's|@''REPLACE_CHOWN''@|$(REPLACE_CHOWN)|g' \
+-	      -e 's|@''REPLACE_FCHDIR''@|$(REPLACE_FCHDIR)|g' \
+-	      -e 's|@''REPLACE_GETCWD''@|$(REPLACE_GETCWD)|g' \
+-	      < $(srcdir)/unistd_.h; \
+-	} > $@-t
+-	mv $@-t $@
+-MOSTLYCLEANFILES += unistd.h unistd.h-t
+-
+-EXTRA_DIST += unistd_.h
+-
+-## end   gnulib module unistd
+-
+ ## begin gnulib module vasnprintf
+ 
+ 
+@@ -375,11 +297,10 @@
+ 
+ ## begin gnulib module xalloc
+ 
++libgnu_a_SOURCES += xmalloc.c
+ 
+ EXTRA_DIST += xalloc.h xmalloc.c
+ 
+-EXTRA_libgnu_a_SOURCES += xmalloc.c
+-
+ ## end   gnulib module xalloc
+ 
+ ## begin gnulib module xsize
+diff -Naur msmtp-1.4.12.orig/gnulib/memxor.c msmtp-1.4.12/gnulib/memxor.c
+--- msmtp-1.4.12.orig/gnulib/memxor.c
++++ msmtp-1.4.12/gnulib/memxor.c
+@@ -23,7 +23,7 @@
+ #include "memxor.h"
+ 
+ void *
+-memxor (void *restrict dest, const void *restrict src, size_t n)
++memxor (void *dest, const void *src, size_t n)
+ {
+   char const *s = src;
+   char *d = dest;
+diff -Naur msmtp-1.4.12.orig/gnulib/memxor.h msmtp-1.4.12/gnulib/memxor.h
+--- msmtp-1.4.12.orig/gnulib/memxor.h
++++ msmtp-1.4.12/gnulib/memxor.h
+@@ -26,6 +26,6 @@
+ /* Compute binary exclusive OR of memory areas DEST and SRC, putting
+    the result in DEST, of length N bytes.  Returns a pointer to
+    DEST. */
+-void *memxor (void *restrict dest, const void *restrict src, size_t n);
++void *memxor (void *dest, const void *src, size_t n);
+ 
+ #endif /* MEMXOR_H */
+diff -Naur msmtp-1.4.12.orig/gnulib/xsize.h msmtp-1.4.12/gnulib/xsize.h
+--- msmtp-1.4.12.orig/gnulib/xsize.h
++++ msmtp-1.4.12/gnulib/xsize.h
+@@ -24,9 +24,7 @@
+ 
+ /* Get SIZE_MAX.  */
+ #include <limits.h>
+-#if HAVE_STDINT_H
+ # include <stdint.h>
+-#endif
+ 
+ /* The size of memory objects is often computed through expressions of
+    type size_t. Example:

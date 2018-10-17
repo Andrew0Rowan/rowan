@@ -1,0 +1,50 @@
+diff --git a/sysklogd/syslogd.c b/sysklogd/syslogd.c
+index 266657f..7db5c16 100644
+--- a/sysklogd/syslogd.c
++++ b/sysklogd/syslogd.c
+@@ -74,6 +74,8 @@
+ #include <sys/sem.h>
+ #include <sys/shm.h>
+ #endif
++#define ENABLE_FEATURE_SYSLOGD_CFG 1
++#define ENABLE_FEATURE_ROTATE_LOGFILE 1
+ 
+ 
+ #define DEBUG 0
+@@ -290,7 +292,7 @@ static void parse_syslogdcfg(const char *file)
+ 	char *tok[3];
+ 	parser_t *parser;
+ 
+-	parser = config_open2(file ? file : "/etc/syslog.conf",
++	parser = config_open2(file ? file : "/data/syslog.conf",
+ 				file ? xfopen_for_read : fopen_for_read);
+ 	if (!parser)
+ 		/* didn't find default /etc/syslog.conf */
+@@ -432,7 +434,7 @@ static void parse_syslogdcfg(const char *file)
+ 
+  cfgerr:
+ 	bb_error_msg_and_die("error in '%s' at line %d",
+-			file ? file : "/etc/syslog.conf",
++			file ? file : "/data/syslog.conf",
+ 			parser->lineno);
+ }
+ #endif
+@@ -739,7 +741,7 @@ static void timestamp_and_log(int pri, char *msg, int len)
+ 	else {
+ 		char res[20];
+ 		parse_fac_prio_20(pri, res);
+-		sprintf(G.printbuf, "%s %.64s %s %s\n", timestamp, G.hostname, res, msg);
++		sprintf(G.printbuf, "%s %s %s\n", timestamp, res, msg);
+ 	}
+ 
+ 	/* Log message locally (to file or shared mem) */
+@@ -1062,6 +1064,9 @@ int syslogd_main(int argc UNUSED_PARAM, char **argv)
+ 	//umask(0); - why??
+ 	write_pidfile(CONFIG_PID_FILE_PATH "/syslogd.pid");
+ 
++	G.logFileSize = 2*1024*1024;
++	G.logFileRotate = 2;
++	
+ 	do_syslogd();
+ 	/* return EXIT_SUCCESS; */
+ }

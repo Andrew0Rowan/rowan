@@ -1,0 +1,44 @@
+diff --git a/evtest.c b/evtest.c
+index 40bc82b..12bd682 100644
+--- a/evtest.c
++++ b/evtest.c
+@@ -77,6 +77,9 @@
+ #define SYN_MAX 3
+ #define SYN_CNT (SYN_MAX + 1)
+ #endif
++#ifndef SYN_REPORT
++#define SYN_REPORT 0
++#endif
+ #ifndef SYN_MT_REPORT
+ #define SYN_MT_REPORT 2
+ #endif
+@@ -106,6 +109,7 @@ static const struct query_mode {
+ 
+ static int grab_flag = 0;
+ static volatile sig_atomic_t stop = 0;
++static int64_t last_sync_time = 0;
+ 
+ static void interrupt_handler(int sig)
+ {
+@@ -1064,7 +1068,12 @@ static int print_events(int fd)
+ 					printf("++++++++++++++ %s ++++++++++++\n", codename(type, code));
+ 				else if (code == SYN_DROPPED)
+ 					printf(">>>>>>>>>>>>>> %s <<<<<<<<<<<<\n", codename(type, code));
+-				else
++				else if (code == SYN_REPORT) {
++					int64_t now = ev[i].time.tv_sec * 1000000LL + ev[i].time.tv_usec;
++					if(last_sync_time)
++						printf(">>>> report rate: %lld\n", 1000000LL / (now - last_sync_time));
++					last_sync_time = now;
++				} else
+ 					printf("-------------- %s ------------\n", codename(type, code));
+ 			} else {
+ 				printf("type %d (%s), code %d (%s), ",
+@@ -1258,6 +1267,7 @@ int main (int argc, char **argv)
+ 	const char *event_type;
+ 	enum evtest_mode mode = MODE_CAPTURE;
+ 
++	last_sync_time = 0;
+ 	while (1) {
+ 		int option_index = 0;
+ 		int c = getopt_long(argc, argv, "", long_options, &option_index);

@@ -1,0 +1,107 @@
+From 362b003e7a7d7399a09b06b51fcf3191ff8983d7 Mon Sep 17 00:00:00 2001
+From: Changtao Hu <changtao.hu@mediatek.com>
+Date: Thu, 22 Jun 2017 11:04:11 +0800
+Subject: [PATCH] gstreamer upgrade: add mdp plugin into playbin
+
+Make patch for gstreamer upgrade
+Test: OK
+
+Signed-off-by: Changtao Hu <changtao.hu@mediatek.com>
+CR-Id: AUTO00005189
+---
+ gst/playback/gstdecodebin2.c |  2 +-
+ gst/playback/gstplaybin2.c   |  5 ++++-
+ gst/playback/gstplaysink.c   | 47 ++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 52 insertions(+), 2 deletions(-)
+
+diff --git a/gst/playback/gstdecodebin2.c b/gst/playback/gstdecodebin2.c
+index 7eb89da..b2ff939 100644
+--- a/gst/playback/gstdecodebin2.c
++++ b/gst/playback/gstdecodebin2.c
+@@ -240,7 +240,7 @@ enum
+ 
+ /* when playing, keep a max of 2MB of data but try to keep the number of buffers
+  * as low as possible (try to aim for 5 buffers) */
+-#define AUTO_PLAY_SIZE_BYTES        2 * 1024 * 1024
++#define AUTO_PLAY_SIZE_BYTES        10 * 1024 * 1024
+ #define AUTO_PLAY_SIZE_BUFFERS      5
+ #define AUTO_PLAY_SIZE_TIME         0
+ 
+diff --git a/gst/playback/gstplaybin2.c b/gst/playback/gstplaybin2.c
+index ad63600..80e210c 100644
+--- a/gst/playback/gstplaybin2.c
++++ b/gst/playback/gstplaybin2.c
+@@ -4691,7 +4691,10 @@ autoplug_select_cb (GstElement * decodebin, GstPad * pad,
+                 gst_element_factory_can_src_any_caps (factory, raw_caps)
+                 || gst_element_factory_can_src_any_caps (factory, caps);
+           } else {
+-            compatible = gst_element_factory_can_src_any_caps (factory, caps);
++            if (flags & GST_PLAY_FLAG_NATIVE_VIDEO)
++              compatible = gst_element_factory_can_src_any_caps (factory, raw_caps);
++            else
++              compatible = gst_element_factory_can_src_any_caps (factory, caps);
+           }
+ 
+           gst_object_unref (sinkpad);
+diff --git a/gst/playback/gstplaysink.c b/gst/playback/gstplaysink.c
+index e17c439..4dabc6c 100644
+--- a/gst/playback/gstplaysink.c
++++ b/gst/playback/gstplaysink.c
+@@ -1926,7 +1926,54 @@ gen_video_chain (GstPlaySink * playsink, gboolean raw, gboolean async)
+     }
+     prev = chain->conv;
+   }
++  else if (playsink->flags & GST_PLAY_FLAG_NATIVE_VIDEO) {
++    GstElement *elem = NULL;
++    GstIterator *iter = NULL;
++    GValue value = { 0 };
++    gboolean done = FALSE;
++    gboolean found_mdp = FALSE;
++
++    iter = gst_bin_iterate_elements (playsink->video_sink);
++    if (iter != NULL) {
++      while (!done) {
++        switch (gst_iterator_next (iter, &value)) {
++          case GST_ITERATOR_OK:
++            elem = (GstElement *) g_value_get_object (&value);
++            GST_DEBUG_OBJECT (playsink, "element->name=%s", GST_ELEMENT_NAME (elem));
++            if (strstr (GST_ELEMENT_NAME (elem), "mtkmdp")) {
++              done = TRUE;
++              found_mdp = TRUE;
++            }
++            /* Iterator increased the element refcount, so unref */
++            g_value_unset (&value);
++            break;
++          default:
++            done = TRUE;
++            break;
++        }
++      }
++      gst_iterator_free (iter);
++    }
+ 
++    if (found_mdp == FALSE) {
++      GST_DEBUG_OBJECT (playsink, "mdp_plugin == NULL");
++      chain->conv = gst_element_factory_make ("mtkmdp", "mtkmdp");
++      if (chain->conv == NULL) {
++        GST_WARNING_OBJECT (playsink, "no mtkmdp plugin");
++      }
++      else {
++        gst_bin_add (bin, chain->conv);
++        if (prev) {
++          if (!gst_element_link_pads_full (prev, "src", chain->conv, "sink",
++                  GST_PAD_LINK_CHECK_TEMPLATE_CAPS))
++            goto link_failed;
++        } else {
++          head = chain->conv;
++        }
++        prev = chain->conv;
++      }
++    }
++  }
+   update_colorbalance (playsink);
+ 
+   if (prev) {
+-- 
+1.9.1
+

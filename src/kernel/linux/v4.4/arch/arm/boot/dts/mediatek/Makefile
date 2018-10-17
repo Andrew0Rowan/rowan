@@ -1,0 +1,19 @@
+dtb-$(CONFIG_ARCH_MEDIATEK) += aud8516p1_sdk_linux.dtb
+dtb-$(CONFIG_ARCH_MEDIATEK) += aud8516p1_slc_sdk_linux.dtb
+dtb-$(CONFIG_ARCH_MEDIATEK) += aud8516p1_slc_sdk_dc2dc_yocto.dtb
+dtb-$(CONFIG_ARCH_MEDIATEK) += aud8516p1v1_slc_yocto.dtb
+dtb-$(CONFIG_ARCH_MEDIATEK) += aud8516p1v1_slc_test_yocto.dtb
+dtb-$(CONFIG_ARCH_MEDIATEK) += aud8516p1v2_slc_test_yocto.dtb
+dtb-$(CONFIG_ARCH_MEDIATEK) += aud8516p1v2_slc_yocto.dtb
+dtb-$(CONFIG_ARCH_MEDIATEK) += aud8516p1v2_consys_slc_yocto.dtb
+dtb-$(CONFIG_ARCH_MEDIATEK) += aud8516p1v2_consys_slc_test_yocto.dtb
+dtb-$(CONFIG_ARCH_MEDIATEK) += aud8516p1v2_consys_slc_128_yocto.dtb
+dtb-$(CONFIG_ARCH_MEDIATEK) += aud8516p1v2_consys_slc_128_test_yocto.dtb
+dtb-$(CONFIG_ARCH_MEDIATEK) += aud8516_ztk_dueros_yocto.dtb
+dtb-$(CONFIG_ARCH_MEDIATEK) += aud8516_ztk_dueros_test_yocto.dtb
+dtb-$(CONFIG_ARCH_MEDIATEK) += aud8516_ztk_open_dueros_yocto.dtb
+dtb-$(CONFIG_ARCH_MEDIATEK) += aud8516_ztk_open_dueros_test_yocto.dtb
+
+always		:= $(dtb-y)
+subdir-y	:= $(dts-dirs)
+clean-files	:= *.dtb

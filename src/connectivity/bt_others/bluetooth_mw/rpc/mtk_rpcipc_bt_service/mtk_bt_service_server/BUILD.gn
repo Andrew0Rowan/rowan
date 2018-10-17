@@ -1,0 +1,72 @@
+#
+#  Copyright (C) 2015 Google, Inc.
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at:
+#
+#  http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+shared_library("libmtk_bt_service_server") {
+  sources = [
+    "rh_init_mtk_bt_service.c",
+  ]
+
+  sources += [
+    "./src/gatt/mtk_bt_service_gattc_handle.c",
+    "./src/gatt/mtk_bt_service_gattc.c",
+    "./src/gatt/mtk_bt_service_gatt_handle.c",
+    "./src/gatt/mtk_bt_service_gatt.c",
+    "./src/gatt/mtk_bt_service_gatts_handle.c",
+    "./src/gatt/mtk_bt_service_gatts.c",
+    "./src/hid/mtk_bt_service_hidh_handle.c",
+    "./src/hid/mtk_bt_service_hidh.c",
+    "./src/avrcp/mtk_bt_service_avrcp_handle.c",
+    "./src/avrcp/mtk_bt_service_avrcp.c",
+    "./src/a2dp/mtk_bt_service_a2dp_handle.c",
+    "./src/a2dp/mtk_bt_service_a2dp.c",
+    "./src/gap/mtk_bt_service_gap_handle.c",
+    "./src/gap/mtk_bt_service_gap.c",
+    "./src/hfp/mtk_bt_service_hfclient_handle.c",
+    "./src/hfp/mtk_bt_service_hfclient.c",
+    "./src/dbg/mtk_bt_service_dbg_handle.c",
+    "./src/dbg/mtk_bt_service_dbg.c",
+    "./src/spp/mtk_bt_service_spp_handle.c",
+    "./src/spp/mtk_bt_service_spp.c",
+  ]
+
+  include_dirs = [
+  "../../../inc_rpc",
+  "../../rpc_ipc/inc",
+  "../mtk_bt_service_client/inc",
+  "inc",
+  ]
+
+  deps = [
+    "//rpc_ipc/src:libipcrpc",
+  ]
+
+  deps += [
+    "//mtk_rpcipc_bt_service/mtk_bt_service_client:libmtk_bt_ipcrpc_struct",
+  ]
+
+  cflags_c = [
+    "-Lobj/osi",
+    "-losi",
+  ]
+
+  libs = [
+    "-ldl",
+    "-lpthread",
+    "-lresolv",
+    "-lrt",
+    "-lbt-mw",
+  ]
+}

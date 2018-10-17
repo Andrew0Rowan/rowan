@@ -1,0 +1,709 @@
+From 046eb7793f390d0ca3f32bd4b7be881f558473fc Mon Sep 17 00:00:00 2001
+From: Changtao Hu <changtao.hu@mediatek.com>
+Date: Wed, 28 Jun 2017 11:00:28 +0800
+Subject: [PATCH] gstreamer upgrade: bad plugins
+
+Make patch for gstreamer upgrade
+Test: OK
+
+Change-Id: I2108abd84fd2034418018246909f0a94ea194691
+Signed-off-by: Changtao Hu <changtao.hu@mediatek.com>
+CR-Id: AUTO00005189
+---
+ gst-libs/gst/codecparsers/gstmpegvideoparser.c |   2 +-
+ gst-libs/gst/wayland/Makefile.am               |   3 +
+ gst/adpcmdec/adpcmdec.c                        |   4 +
+ gst/ivfparse/gstivfparse.c                     |   3 +-
+ gst/jpegformat/gstjpegformat.c                 |   2 +-
+ gst/jpegformat/gstjpegparse.c                  |   2 +-
+ gst/mpegdemux/gstmpegdemux.c                   |  18 +++
+ gst/mpegtsdemux/tsdemux.c                      | 183 +++++++++++++++++++++++++
+ gst/videoparsers/gsth264parse.c                |  22 ++-
+ gst/videoparsers/gsth264parse.h                |   1 +
+ gst/videoparsers/gsth265parse.c                |  15 +-
+ gst/videoparsers/gsth265parse.h                |   1 +
+ gst/videoparsers/gstmpeg4videoparse.c          |   9 +-
+ gst/videoparsers/gstmpeg4videoparse.h          |   1 +
+ gst/videoparsers/gstmpegvideoparse.c           |  90 +++++++++---
+ 15 files changed, 326 insertions(+), 30 deletions(-)
+
+diff --git a/gst-libs/gst/codecparsers/gstmpegvideoparser.c b/gst-libs/gst/codecparsers/gstmpegvideoparser.c
+index debafa0..ee6ee95 100644
+--- a/gst-libs/gst/codecparsers/gstmpegvideoparser.c
++++ b/gst-libs/gst/codecparsers/gstmpegvideoparser.c
+@@ -266,7 +266,7 @@ gst_mpeg_video_parse (GstMpegVideoPacket * packet,
+   size -= off + 4;
+   off = scan_for_start_codes (&br, 0, size);
+ 
+-  if (off > 0)
++  if (off >= 0)
+     packet->size = off;
+ 
+   return TRUE;
+diff --git a/gst-libs/gst/wayland/Makefile.am b/gst-libs/gst/wayland/Makefile.am
+index 0344598..a067945 100644
+--- a/gst-libs/gst/wayland/Makefile.am
++++ b/gst-libs/gst/wayland/Makefile.am
+@@ -21,6 +21,9 @@ libgstwayland_@GST_API_VERSION@_la_LDFLAGS = \
+ 	$(GST_ALL_LDFLAGS) \
+ 	$(GST_LT_LDFLAGS)
+ 
++libgstwayland_@GST_API_VERSION@include_HEADERS = \
++	wayland.h
++
+ noinst_HEADERS = \
+ 	wayland.h
+ 
+diff --git a/gst/adpcmdec/adpcmdec.c b/gst/adpcmdec/adpcmdec.c
+index 83289ba..58fb8bc 100644
+--- a/gst/adpcmdec/adpcmdec.c
++++ b/gst/adpcmdec/adpcmdec.c
+@@ -424,6 +424,10 @@ adpcmdec_handle_frame (GstAudioDecoder * bdec, GstBuffer * buffer)
+         ("frame decode failed"), ret);
+   }
+ 
++  if (bdec->ts_none) {
++	bdec->sub_ts_none = FALSE;
++  }
++
+   if (ret == GST_FLOW_OK)
+     ret = gst_audio_decoder_finish_frame (bdec, outbuf, 1);
+ 
+diff --git a/gst/ivfparse/gstivfparse.c b/gst/ivfparse/gstivfparse.c
+index bea1e19..f6cd0ad 100644
+--- a/gst/ivfparse/gstivfparse.c
++++ b/gst/ivfparse/gstivfparse.c
+@@ -333,7 +333,8 @@ gst_ivf_parse_handle_frame_data (GstIvfParse * ivf, GstBaseParseFrame * frame,
+     if (gst_buffer_map (frame->out_buffer, &map, GST_MAP_READ)) {
+       guint32 width, height;
+ 
+-      if (ivf->fourcc == GST_MAKE_FOURCC ('V', 'P', '8', '0')) {
++      if ((ivf->fourcc == GST_MAKE_FOURCC ('V', 'P', '8', '0')) || 
++          (ivf->fourcc == GST_MAKE_FOURCC ('V', 'P', '9', '0'))) {
+         guint32 frame_tag;
+         frame_tag = GST_READ_UINT24_LE (map.data);
+         if (!(frame_tag & 0x01) && map.size >= 10) {    /* key frame */
+diff --git a/gst/jpegformat/gstjpegformat.c b/gst/jpegformat/gstjpegformat.c
+index b410466..1faf1ce 100644
+--- a/gst/jpegformat/gstjpegformat.c
++++ b/gst/jpegformat/gstjpegformat.c
+@@ -30,7 +30,7 @@
+ static gboolean
+ plugin_init (GstPlugin * plugin)
+ {
+-  if (!gst_element_register (plugin, "jpegparse", GST_RANK_NONE,
++  if (!gst_element_register (plugin, "jpegparse", GST_RANK_PRIMARY,
+           GST_TYPE_JPEG_PARSE))
+     return FALSE;
+   if (!gst_element_register (plugin, "jifmux", GST_RANK_SECONDARY,
+diff --git a/gst/jpegformat/gstjpegparse.c b/gst/jpegformat/gstjpegparse.c
+index 77e53a6..c8cb7c3 100644
+--- a/gst/jpegformat/gstjpegparse.c
++++ b/gst/jpegformat/gstjpegparse.c
+@@ -151,7 +151,7 @@ gst_jpeg_parse_class_init (GstJpegParseClass * klass)
+ 
+   gst_element_class_set_static_metadata (gstelement_class,
+       "JPEG stream parser",
+-      "Video/Parser",
++      "Video/Parser/Codec",
+       "Parse JPEG images into single-frame buffers",
+       "Arnout Vandecappelle (Essensium/Mind) <arnout@mind.be>");
+ 
+diff --git a/gst/mpegdemux/gstmpegdemux.c b/gst/mpegdemux/gstmpegdemux.c
+index eb2848b..b979656 100644
+--- a/gst/mpegdemux/gstmpegdemux.c
++++ b/gst/mpegdemux/gstmpegdemux.c
+@@ -2246,7 +2246,25 @@ gst_ps_demux_data_cb (GstPESFilter * filter, gboolean first,
+       }
+       if (stream_type == -1)
+         goto unknown_stream_type;
++    } else if (stream_type == ST_GST_VIDEO_MPEG1_OR_2) {
++        if (datalen >= 4) {
++          if (!memcmp("\x00\x00\x01\xB0", map.data, 4)) {
++            stream_type = ST_VIDEO_MPEG4;
++          }
++        }
++        if (datalen >= 5) {
++          if (!memcmp("\x00\x00\x01\x00\x00", map.data, 5)) {
++            stream_type = ST_VIDEO_MPEG4;
++          }
++        }
++    } else if (stream_type == ST_AUDIO_MPEG1) {
++        if (datalen >= 4) {
++          if (!memcmp("\xFF\xF1\x50\x80", map.data, 4)) {
++            stream_type = ST_AUDIO_AAC_ADTS;
++          }
++        }
+     }
++
+     if (filter->pts != -1) {
+       demux->next_pts = filter->pts + demux->scr_adjust;
+       GST_LOG_OBJECT (demux, "stream 0x%02x PTS = orig %" G_GUINT64_FORMAT
+diff --git a/gst/mpegtsdemux/tsdemux.c b/gst/mpegtsdemux/tsdemux.c
+index 8a41f90..7becf45 100644
+--- a/gst/mpegtsdemux/tsdemux.c
++++ b/gst/mpegtsdemux/tsdemux.c
+@@ -39,6 +39,9 @@
+ #include <gst/pbutils/pbutils.h>
+ #include <gst/base/base.h>
+ #include <gst/audio/audio.h>
++#include <gst/riff/riff-read.h>
++#include <gst/riff/riff-ids.h>
++#include <gst/riff/riff-media.h>
+ 
+ #include "mpegtsbase.h"
+ #include "tsdemux.h"
+@@ -1048,6 +1051,168 @@ gst_ts_demux_create_tags (TSDemuxStream * stream)
+   }
+ }
+ 
++static GstFlowReturn
++gst_ts_demux_scan_vc1_wh (MpegTSBase * base, guint * w, guint * h)
++{
++  const guint cacheSize = 64 * 1024;
++  const guint cacheCount = 32;
++  const guint gapCount = 4 + 2 + 3;
++  guint cacheStart = 0;
++  GstFlowReturn ret = GST_FLOW_ERROR;
++  gboolean done = FALSE;
++  GstBuffer *buffer = NULL;
++  guint i = 0;
++  guint offset = 0;
++  GstMapInfo map;
++  guint8 *data = NULL;
++  size_t size = 0;
++
++  if (G_UNLIKELY (base == NULL)) {
++    GST_DEBUG ("base is NULL");
++    return ret;
++  }
++
++  if (w == NULL || h == NULL) {
++    GST_DEBUG ("w or h is NULL");
++    return ret;
++  }
++
++  GST_DEBUG ("Scanning for width and height");
++
++  for (i = 0; (i < cacheCount) && !done; i++) {
++    if (i == 0) {
++      cacheStart = 0;
++    } else {
++      cacheStart = i * (cacheSize - gapCount);
++    }
++
++    GST_DEBUG ("Grabbing %d => %d", cacheStart, cacheStart + cacheSize);
++    ret = gst_pad_pull_range (base->sinkpad, cacheStart, cacheSize, &buffer);
++    if (G_UNLIKELY (ret == GST_FLOW_EOS)) {
++      break;
++    }
++    if (G_UNLIKELY (ret != GST_FLOW_OK)) {
++      break;
++    }
++
++    gst_buffer_map (buffer, &map, GST_MAP_READ);
++
++    data=map.data;
++    size=map.size;
++
++    for (offset = 0; offset <= (size - gapCount); offset++) {
++      if (memcmp("\x00\x00\x01\x0F", data + offset, 4)) {
++        offset++;
++      } else {
++        offset +=4;
++        offset +=2;
++
++        *w = (((data[offset] << 4) + (data[offset+1] >> 4)) << 1) + 2;
++        *h = ((((data[offset+1] & 0x0F) << 8) + data[offset+2]) << 1) + 2;
++        done = TRUE;
++        ret = GST_FLOW_OK;
++        break;
++      }
++    }
++
++    gst_buffer_unmap (buffer, &map);
++    gst_buffer_unref(buffer);
++    buffer = NULL;
++  }
++
++  return ret;
++}
++
++static GstFlowReturn
++gst_ts_demux_separate_vc1_header (GstTSDemux * demux, TSDemuxStream * stream, GstBuffer ** buffer)
++{
++  static gboolean headerPushed = FALSE;
++  GstFlowReturn res = GST_FLOW_OK;
++
++  if (memcmp("\x00\x00\x01\x0F", stream->data, 4)) {
++    if (!headerPushed) {
++      gst_buffer_unref (*buffer);
++      GST_DEBUG ("This frame should be dropped!");
++      res = GST_FLOW_ERROR;
++      return res;
++    }
++  } else {
++    GstBuffer *bufLeft = NULL;
++    const guint8 *data = stream->data;
++    size_t offset = 0;
++
++    while (offset + 3 < stream->current_size) {
++      if (memcmp(data+offset, "\x00\x00\x01", 3)) {
++        offset++;
++        continue;
++      } else {
++        guint currentStartCode = data[offset+3];
++
++        if (currentStartCode == 0x0F || currentStartCode == 0x0E) {
++          offset++;
++          continue;
++        } else {
++          //found data
++          break;
++        }
++      }
++    }
++
++    if (!headerPushed) {
++      GstCaps *caps = NULL;
++      GstStructure *str = NULL;
++      GstBuffer *bufVids = NULL;
++      GstBuffer *bufSeq = NULL;
++      GstBuffer *bufMerged = NULL;
++      guint width = 0;
++      guint height = 0;
++      gst_riff_strf_vids *pVids;
++      const guint sizeVids = sizeof (gst_riff_strf_vids);
++
++      pVids = g_new (gst_riff_strf_vids, 1);
++      memset (pVids, 0, sizeVids);
++
++      caps = gst_pad_get_current_caps (stream->pad);
++      if (caps) {
++        str = gst_caps_get_structure (caps, 0);
++
++        gst_structure_get_int (str, "width", &width);
++        gst_structure_get_int (str, "height", &height);
++      }
++
++      pVids->size = sizeVids + offset;
++      pVids->width = width;
++      pVids->height = height;
++
++      pVids->size = GUINT32_FROM_LE (pVids->size);
++      pVids->width = GUINT32_FROM_LE (pVids->width);
++      pVids->height = GUINT32_FROM_LE (pVids->height);
++      pVids->compression = GST_MAKE_FOURCC ('W', 'V', 'C', '1');
++
++      bufVids = gst_buffer_new_wrapped (g_memdup ((guint8 *) pVids,
++                sizeVids), sizeVids);
++      bufSeq = gst_buffer_new_wrapped (g_memdup ((guint8 *) data,
++                offset), offset);
++      bufMerged = gst_buffer_append (bufVids, bufSeq);
++
++      gst_pad_push (stream->pad, bufMerged);
++      headerPushed = TRUE;
++
++      if (pVids) {
++        g_free (pVids);
++      }
++    }
++
++    bufLeft = gst_buffer_copy_region (*buffer, GST_BUFFER_COPY_ALL, offset, stream->current_size-offset);
++    stream->current_size -= offset;
++    gst_buffer_unref (*buffer);
++    *buffer = bufLeft;
++    res = GST_FLOW_OK;
++  }
++
++  return res;
++}
++
+ static GstPad *
+ create_pad_for_stream (MpegTSBase * base, MpegTSBaseStream * bstream,
+     MpegTSBaseProgram * program)
+@@ -1062,11 +1227,16 @@ create_pad_for_stream (MpegTSBase * base, MpegTSBaseStream * bstream,
+   gboolean sparse = FALSE;
+   gboolean is_audio = FALSE, is_video = FALSE, is_subpicture = FALSE,
+       is_private = FALSE;
++  guint width = 0;
++  guint height = 0;
+ 
+   gst_ts_demux_create_tags (stream);
+ 
+   GST_LOG ("Attempting to create pad for stream 0x%04x with stream_type %d",
+       bstream->pid, bstream->stream_type);
++  GST_LOG ("program number is %d", program->program_number);
++  GST_LOG ("program registration_id is 0x%x,pmt_pid is 0x%x,pcr_pid is 0x%x,",
++      program->registration_id, program->pmt_pid, program->pcr_pid);
+ 
+   /* First handle BluRay-specific stream types since there is some overlap
+    * between BluRay and non-BluRay streay type identifiers */
+@@ -1194,6 +1364,7 @@ create_pad_for_stream (MpegTSBase * base, MpegTSBaseStream * bstream,
+         break;
+       }
+ 
++      GST_LOG ("bstream registration_id is 0x%x", bstream->registration_id);
+       switch (bstream->registration_id) {
+         case DRF_ID_DTS1:
+         case DRF_ID_DTS2:
+@@ -1473,9 +1644,14 @@ create_pad_for_stream (MpegTSBase * base, MpegTSBaseStream * bstream,
+       caps = gst_caps_new_simple ("video/x-wmv",
+           "wmvversion", G_TYPE_INT, 3, "format", G_TYPE_STRING, "WVC1", NULL);
+ 
++      gst_ts_demux_scan_vc1_wh (base, &width, &height);
++      gst_caps_set_simple (caps, "width", G_TYPE_INT, width, NULL);
++      gst_caps_set_simple (caps, "height", G_TYPE_INT, height, NULL);
++
+       break;
+     }
+     case ST_PS_AUDIO_AC3:
++      GST_LOG ("ac3 audio of ST_PS_AUDIO_AC3");
+       /* DVB_ENHANCED_AC3 */
+       desc =
+           mpegts_get_descriptor_from_stream (bstream,
+@@ -2578,6 +2754,13 @@ gst_ts_demux_push_pending_data (GstTSDemux * demux, TSDemuxStream * stream)
+     }
+   }
+ 
++  if (bs->stream_type == ST_PRIVATE_EA) {
++    if (G_UNLIKELY (gst_ts_demux_separate_vc1_header (demux, stream, &buffer)
++        != GST_FLOW_OK)) {
++      goto beach;
++    }
++  }
++
+   if (G_UNLIKELY (stream->need_newsegment))
+     calculate_and_push_newsegment (demux, stream);
+ 
+diff --git a/gst/videoparsers/gsth264parse.c b/gst/videoparsers/gsth264parse.c
+index 05b6b75..dd07455 100644
+--- a/gst/videoparsers/gsth264parse.c
++++ b/gst/videoparsers/gsth264parse.c
+@@ -165,6 +165,7 @@ gst_h264_parse_init (GstH264Parse * h264parse)
+   gst_base_parse_set_pts_interpolation (GST_BASE_PARSE (h264parse), FALSE);
+   GST_PAD_SET_ACCEPT_INTERSECT (GST_BASE_PARSE_SINK_PAD (h264parse));
+   GST_PAD_SET_ACCEPT_TEMPLATE (GST_BASE_PARSE_SINK_PAD (h264parse));
++  h264parse->caps_flag = FALSE;
+ }
+ 
+ 
+@@ -1775,13 +1776,21 @@ gst_h264_parse_update_src_caps (GstH264Parse * h264parse, GstCaps * caps)
+       caps = gst_caps_copy (sink_caps);
+ 
+       /* sps should give this but upstream overrides */
+-      if (s && gst_structure_has_field (s, "width"))
++      if (s && gst_structure_has_field (s, "width")) {
+         gst_structure_get_int (s, "width", &width);
++        if (width != h264parse->width) {
++          width = h264parse->width;
++        }
++      }
+       else
+         width = h264parse->width;
+ 
+-      if (s && gst_structure_has_field (s, "height"))
++      if (s && gst_structure_has_field (s, "height")) {
+         gst_structure_get_int (s, "height", &height);
++        if (height != h264parse->height) {
++          height = h264parse->height;
++        }
++      }
+       else
+         height = h264parse->height;
+ 
+@@ -1894,7 +1903,10 @@ gst_h264_parse_update_src_caps (GstH264Parse * h264parse, GstCaps * caps)
+         gst_buffer_replace (&h264parse->codec_data, NULL);
+       }
+ 
+-      gst_pad_set_caps (GST_BASE_PARSE_SRC_PAD (h264parse), caps);
++      if (sps && !h264parse->caps_flag) {
++        h264parse->caps_flag = TRUE;
++        gst_pad_set_caps (GST_BASE_PARSE_SRC_PAD (h264parse), caps);
++      }
+     }
+ 
+     if (src_caps)
+@@ -2441,11 +2453,11 @@ gst_h264_parse_set_caps (GstBaseParse * parse, GstCaps * caps)
+   if (format == GST_H264_PARSE_FORMAT_NONE) {
+     /* codec_data implies avc */
+     if (codec_data_value != NULL) {
+-      GST_ERROR ("video/x-h264 caps with codec_data but no stream-format=avc");
++      GST_LOG ("video/x-h264 caps with codec_data but no stream-format=avc");
+       format = GST_H264_PARSE_FORMAT_AVC;
+     } else {
+       /* otherwise assume bytestream input */
+-      GST_ERROR ("video/x-h264 caps without codec_data or stream-format");
++      GST_LOG ("video/x-h264 caps without codec_data or stream-format");
+       format = GST_H264_PARSE_FORMAT_BYTE;
+     }
+   }
+diff --git a/gst/videoparsers/gsth264parse.h b/gst/videoparsers/gsth264parse.h
+index 58d818c..20466f3 100644
+--- a/gst/videoparsers/gsth264parse.h
++++ b/gst/videoparsers/gsth264parse.h
+@@ -127,6 +127,7 @@ struct _GstH264Parse
+   GstVideoMultiviewMode multiview_mode;
+   GstVideoMultiviewFlags multiview_flags;
+   gboolean first_in_bundle;
++  gboolean caps_flag;
+ };
+ 
+ struct _GstH264ParseClass
+diff --git a/gst/videoparsers/gsth265parse.c b/gst/videoparsers/gsth265parse.c
+index 26e7c48..0f1c87f 100644
+--- a/gst/videoparsers/gsth265parse.c
++++ b/gst/videoparsers/gsth265parse.c
+@@ -139,6 +139,7 @@ static void
+ gst_h265_parse_init (GstH265Parse * h265parse)
+ {
+   h265parse->frame_out = gst_adapter_new ();
++  h265parse->has_caps_flag = FALSE;
+   gst_base_parse_set_pts_interpolation (GST_BASE_PARSE (h265parse), FALSE);
+   GST_PAD_SET_ACCEPT_INTERSECT (GST_BASE_PARSE_SINK_PAD (h265parse));
+   GST_PAD_SET_ACCEPT_TEMPLATE (GST_BASE_PARSE_SINK_PAD (h265parse));
+@@ -1608,7 +1609,12 @@ gst_h265_parse_update_src_caps (GstH265Parse * h265parse, GstCaps * caps)
+         gst_buffer_replace (&h265parse->codec_data, NULL);
+       }
+ 
+-      gst_pad_set_caps (GST_BASE_PARSE_SRC_PAD (h265parse), caps);
++      if (h265parse->has_caps_flag == FALSE) {
++        GST_INFO_OBJECT (h265parse, "h265parse->has_caps_flag=FALSE");
++        gst_pad_set_caps (GST_BASE_PARSE_SRC_PAD (h265parse), caps);
++        h265parse->has_caps_flag = TRUE;
++      }
++
+     }
+ 
+     if (src_caps)
+@@ -2050,8 +2056,13 @@ gst_h265_parse_set_caps (GstBaseParse * parse, GstCaps * caps)
+     for (i = 0; i < data[22]; i++) {
+       num_nals = GST_READ_UINT16_BE (data + off + 1);
+       for (j = 0; j < num_nals; j++) {
+-        parseres = gst_h265_parser_identify_nalu_hevc (h265parse->nalparser,
++        if (j > 0) {
++          parseres = gst_h265_parser_identify_nalu_hevc (h265parse->nalparser,
++            data, off, size, 2, &nalu);
++        } else {
++          parseres = gst_h265_parser_identify_nalu_hevc (h265parse->nalparser,
+             data, off + 3, size, 2, &nalu);
++        }
+ 
+         if (parseres != GST_H265_PARSER_OK) {
+           gst_buffer_unmap (codec_data, &map);
+diff --git a/gst/videoparsers/gsth265parse.h b/gst/videoparsers/gsth265parse.h
+index 91e84ab..a912cf6 100644
+--- a/gst/videoparsers/gsth265parse.h
++++ b/gst/videoparsers/gsth265parse.h
+@@ -81,6 +81,7 @@ struct _GstH265Parse
+   /* frame parsing */
+   gint idr_pos, sei_pos;
+   gboolean update_caps;
++  gboolean has_caps_flag;
+   GstAdapter *frame_out;
+   gboolean keyframe;
+   gboolean header;
+diff --git a/gst/videoparsers/gstmpeg4videoparse.c b/gst/videoparsers/gstmpeg4videoparse.c
+index a1fd3b2..ba8bd8c 100644
+--- a/gst/videoparsers/gstmpeg4videoparse.c
++++ b/gst/videoparsers/gstmpeg4videoparse.c
+@@ -212,6 +212,7 @@ gst_mpeg4vparse_reset (GstMpeg4VParse * mp4vparse)
+   mp4vparse->pending_key_unit_ts = GST_CLOCK_TIME_NONE;
+   mp4vparse->force_key_unit_event = NULL;
+   mp4vparse->discont = FALSE;
++  mp4vparse->vop_flag = FALSE;
+ 
+   gst_buffer_replace (&mp4vparse->config, NULL);
+   memset (&mp4vparse->vol, 0, sizeof (mp4vparse->vol));
+@@ -348,6 +349,7 @@ gst_mpeg4vparse_process_sc (GstMpeg4VParse * mp4vparse, GstMpeg4Packet * packet,
+       if (packet->type == GST_MPEG4_VIDEO_OBJ_PLANE) {
+         GST_LOG_OBJECT (mp4vparse, "startcode is VOP");
+         mp4vparse->vop_offset = packet->offset;
++	    mp4vparse->vop_flag = TRUE;
+       } else if (packet->type == GST_MPEG4_GROUP_OF_VOP) {
+         GST_LOG_OBJECT (mp4vparse, "startcode is GOP");
+       } else {
+@@ -537,6 +539,7 @@ out:
+       GST_BUFFER_FLAG_SET (frame->buffer, GST_BUFFER_FLAG_DISCONT);
+       mp4vparse->discont = FALSE;
+     }
++    mp4vparse->vop_flag == FALSE;
+     return gst_base_parse_finish_frame (parse, frame, framesize);
+   }
+ 
+@@ -550,8 +553,8 @@ gst_mpeg4vparse_update_src_caps (GstMpeg4VParse * mp4vparse)
+   GstStructure *s = NULL;
+ 
+   /* only update if no src caps yet or explicitly triggered */
+-  if (G_LIKELY (gst_pad_has_current_caps (GST_BASE_PARSE_SRC_PAD (mp4vparse)) &&
+-          !mp4vparse->update_caps))
++  if (G_LIKELY (gst_pad_has_current_caps (GST_BASE_PARSE_SRC_PAD (mp4vparse)) ||
++          !mp4vparse->update_caps || (mp4vparse->vop_flag == FALSE)))
+     return;
+ 
+   GST_LOG_OBJECT (mp4vparse, "Updating caps");
+@@ -637,7 +640,7 @@ gst_mpeg4vparse_parse_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
+   else
+     GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_DELTA_UNIT);
+ 
+-  if (G_UNLIKELY (mp4vparse->drop && !mp4vparse->config)) {
++  if (G_UNLIKELY (mp4vparse->drop && !mp4vparse->config && (mp4vparse->vop_flag == FALSE))) {
+     GST_LOG_OBJECT (mp4vparse, "dropping frame as no config yet");
+     return GST_BASE_PARSE_FLOW_DROPPED;
+   } else
+diff --git a/gst/videoparsers/gstmpeg4videoparse.h b/gst/videoparsers/gstmpeg4videoparse.h
+index 878cf60..bd8277e 100644
+--- a/gst/videoparsers/gstmpeg4videoparse.h
++++ b/gst/videoparsers/gstmpeg4videoparse.h
+@@ -55,6 +55,7 @@ struct _GstMpeg4VParse {
+   gboolean intra_frame;
+   gboolean update_caps;
+   gboolean sent_codec_tag;
++  gboolean vop_flag;
+ 
+   GstMpeg4VisualObject vo;
+   gint vo_offset;
+diff --git a/gst/videoparsers/gstmpegvideoparse.c b/gst/videoparsers/gstmpegvideoparse.c
+index bf71a3e..0dcb111 100644
+--- a/gst/videoparsers/gstmpegvideoparse.c
++++ b/gst/videoparsers/gstmpegvideoparse.c
+@@ -563,10 +563,10 @@ gst_mpegv_parse_process_sc (GstMpegvParse * mpvparse,
+         ret = FALSE;
+       } else {
+         /* TSN is stored in first 10 bits */
+-        int tsn = info->data[off] << 2 | (info->data[off + 1] & 0xC0) >> 6;
++        //int tsn = info->data[off] << 2 | (info->data[off + 1] & 0xC0) >> 6;
+ 
+-        if (tsn == mpvparse->pichdr.tsn)        /* prevent termination if TSN is same */
+-          ret = FALSE;
++        //if (tsn == mpvparse->pichdr.tsn)        /* prevent termination if TSN is same */
++        //  ret = FALSE;
+       }
+     }
+   }
+@@ -733,12 +733,18 @@ gst_mpegv_parse_update_src_caps (GstMpegvParse * mpvparse)
+ {
+   GstCaps *caps = NULL;
+   GstStructure *s = NULL;
++  static gboolean is_first_in=TRUE;
+ 
+   /* only update if no src caps yet or explicitly triggered */
+   if (G_LIKELY (gst_pad_has_current_caps (GST_BASE_PARSE_SRC_PAD (mpvparse)) &&
+           !mpvparse->update_caps))
+     return;
+ 
++  if (!is_first_in) {
++    return;
++  }
++  is_first_in = FALSE;
++
+   /* carry over input caps as much as possible; override with our own stuff */
+   caps = gst_pad_get_current_caps (GST_BASE_PARSE_SINK_PAD (mpvparse));
+   if (caps) {
+@@ -760,24 +766,11 @@ gst_mpegv_parse_update_src_caps (GstMpegvParse * mpvparse)
+       "parsed", G_TYPE_BOOLEAN, TRUE, NULL);
+ 
+   if (mpvparse->sequencehdr.width > 0 && mpvparse->sequencehdr.height > 0) {
+-    GstMpegVideoSequenceDisplayExt *seqdispext;
+     gint width, height;
+ 
+     width = mpvparse->sequencehdr.width;
+     height = mpvparse->sequencehdr.height;
+ 
+-    if (mpvparse->config_flags & FLAG_SEQUENCE_DISPLAY_EXT) {
+-      seqdispext = &mpvparse->sequencedispext;
+-
+-      if (seqdispext->display_horizontal_size <= width
+-          && seqdispext->display_vertical_size <= height) {
+-        width = seqdispext->display_horizontal_size;
+-        height = seqdispext->display_vertical_size;
+-        GST_INFO_OBJECT (mpvparse,
+-            "stream has display extension: display_width=%d display_height=%d",
+-            width, height);
+-      }
+-    }
+     gst_caps_set_simple (caps, "width", G_TYPE_INT, width,
+         "height", G_TYPE_INT, height, NULL);
+   }
+@@ -929,6 +922,61 @@ gst_mpegv_parse_parse_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
+ }
+ 
+ static GstFlowReturn
++gst_mpegv_parse_frame_max_slice_no (const GstBuffer * buf, guint * max_slice_no)
++{
++  GstFlowReturn ret = GST_FLOW_OK;
++  GstBuffer *buffer = buf;
++  GstMapInfo map;
++  guint8 *data = NULL;
++  size_t size = 0;
++  size_t offset = 0;
++  guint max_no = 0;
++
++  gst_buffer_map (buffer, &map, GST_MAP_READ);
++  data = map.data;
++  size = map.size;
++
++  for (offset=0; offset + 3 < size; offset++) {
++    if (!memcmp(data+offset, "\x00\x00\x01", 3)) {
++      guint currentStartCode = data[offset+3];
++
++      if ((currentStartCode <= GST_MPEG_VIDEO_PACKET_SLICE_MAX) && (currentStartCode > max_no)) {
++        max_no = currentStartCode;
++      }
++    }
++  }
++
++  gst_buffer_unmap (buffer, &map);
++
++  *max_slice_no = max_no;
++  return ret;
++}
++
++static gboolean
++gst_mpegv_parse_frame_is_invalid (GstBaseParse * parse, GstBaseParseFrame * frame)
++{
++  GstMpegvParse *mpvparse = GST_MPEGVIDEO_PARSE (parse);
++  GstBuffer *buffer = frame->buffer;
++  static guint preFrameMaxSliceNo = 0;
++  guint curFrameMaxSliceNo = 0;
++  static gboolean shouldDrop = FALSE;
++
++  if (G_UNLIKELY (mpvparse->pichdr.pic_type != GST_MPEG_VIDEO_PICTURE_TYPE_I)) {
++    return shouldDrop;
++  }
++
++  gst_mpegv_parse_frame_max_slice_no (buffer, &curFrameMaxSliceNo);
++  if ((curFrameMaxSliceNo + 13) <= preFrameMaxSliceNo) {
++    shouldDrop = TRUE;
++  } else {
++    shouldDrop = FALSE;
++  }
++
++  preFrameMaxSliceNo = curFrameMaxSliceNo;
++  return shouldDrop;
++}
++
++static GstFlowReturn
+ gst_mpegv_parse_pre_push_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
+ {
+   GstMpegvParse *mpvparse = GST_MPEGVIDEO_PARSE (parse);
+@@ -941,6 +989,16 @@ gst_mpegv_parse_pre_push_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
+   GstMpegVideoPictureExt *pic_ext = NULL;
+   GstMpegVideoQuantMatrixExt *quant_ext = NULL;
+ 
++  if (gst_mpegv_parse_frame_is_invalid (parse, frame)) {
++    frame->flags |= GST_BASE_PARSE_FRAME_FLAG_DROP;
++    return GST_FLOW_OK;
++  }
++
++  GstBuffer *buffer = frame->buffer;
++  if (!GST_BUFFER_PTS_IS_VALID (buffer)) {
++    GST_BUFFER_PTS (buffer) = GST_BUFFER_DTS (buffer);
++  }
++
+   /* tag sending done late enough in hook to ensure pending events
+    * have already been sent */
+ 
+-- 
+1.9.1
+

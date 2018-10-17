@@ -1,0 +1,179 @@
+#!/bin/sh
+#	@author CC Ma
+#	@date	2009/03/20
+#	@brief
+#		dhcpc event handling script
+#
+
+usage() {
+	echo "Usage: $0 {start/stop/restart/show} interface ..."
+	exit 1
+}
+
+stop() {
+	if=$1
+	if [ -f /tmp/udhcpc-$1.pid ] ; then
+        echo -n "kill udhcpc pid : "
+	cat /tmp/udhcpc-$1.pid
+        kill `cat /tmp/udhcpc-$if.pid` > /dev/null 2>&1
+        kill `cat /tmp/udhcpc-$1.pid` > /dev/null 2>&1
+	ps | grep '[u]dhcpc' | awk '{print $1}' | xargs -r kill >/dev/null 2>&1
+        #ifconfig $if down
+        ifconfig $if 0.0.0.0
+        ret=$?
+		rm -f /tmp/udhcpc-$1.pid
+		rm -f $2
+    else
+	    echo -n "no udhcpc pid can't be killed, but udhcpc id is "
+	    ps | grep "/sbin/udhcpc -i" | awk '{print $1}' | head -n 1 > /tmp/udhcpc.pid    
+	    cat /tmp/udhcpc.pid
+        kill `cat /tmp/udhcpc.pid` > /dev/null 2>&1
+        kill `cat /tmp/udhcpc.pid` > /dev/null 2>&1
+        rm -f /tmp/udhcpc.pid
+	ps | grep '[u]dhcpc' | awk '{print $1}' | xargs -r kill >/dev/null 2>&1
+        ret=$?
+    fi
+    
+    # We should consider the situation that using DHCP and PPPoE at the same time.
+    # If we stop DHCP and clean dns setting here, we may clean up DNS server that used by PPPoE
+    cat /dev/null > /etc/resolv.conf
+    cat /dev/null > $2
+}
+
+start() {
+   if=$1
+
+   echo "<dhcpc script>Cleaing up remaining udhcpc process in the system."
+   if [ -f /tmp/udhcpc-$if.pid ] ; then
+	   echo -n "<dhcpc script>kill udhcpc pid : "
+	   cat /tmp/udhcpc-$if.pid
+	   kill `cat /tmp/udhcpc-$if.pid` > /dev/null 2>&1
+	   ps | grep '[u]dhcpc' | awk '{print $1}' | xargs -r kill >/dev/null 2>&1
+	   ret=$?
+	   rm -f /tmp/udhcpc-$if.pid
+	   rm -f $2
+   else
+	   echo -n "<dhcpc script>no udhcpc pid can be killed, but udhcpc id is "
+	   ps | grep "/sbin/udhcpc -i" | awk '{print $1}' | head -n 1 > /tmp/udhcpc.pid
+	   cat /tmp/udhcpc.pid
+	   kill `cat /tmp/udhcpc.pid` > /dev/null 2>&1
+	   rm -f /tmp/udhcpc.pid
+	   ps | grep '[u]dhcpc' | awk '{print $1}' | xargs -r kill >/dev/null 2>&1
+	   ret=$?
+   fi
+
+   echo "<dhcpc script>Invoke new udhcpc process."
+   echo -n "<dhcpc script>/sbin/udhcpc -i $if -s /usr/share/udhcpc/default.script -p /tmp/udhcpc-$if.pid -n -t 20 -T 2 -a... "
+   cat /dev/null > /tmp/udhcpc-$if.pid
+   /sbin/udhcpc -i $if -s /usr/share/udhcpc/default.script -p /tmp/udhcpc-$if.pid -n -t 20 -T 2 | tee /var/dhcpc.log
+
+   cat /var/dhcpc.log | grep time
+   ret=$?
+
+   netif=$1
+   if [ "$3" = 0 ] ; then
+
+       tmp=$2
+       cat /dev/null > $tmp
+       ifconfig $netif | grep HWaddr | awk '{print "MAC " $5}' > $tmp
+       ifconfig $netif | grep inet | awk '{print $2}' | sed -e "s/addr\://" | awk '{print "IP " $0}' >> $tmp
+       ifconfig $netif | grep inet | awk '{print $4}' | sed -e "s/Mask\://" | awk '{print "Subnet " $0}' >> $tmp
+       route -n | grep $netif | grep UG | awk '{print "router " $2}' >> $tmp
+       cat /etc/resolv.conf | grep nameserver | awk '{print "DNS " $2}' >> $tmp
+   else
+       echo "set network info $netif"
+       /sbin/netinfc set MAC `ifconfig $netif | grep HWaddr | awk '{print $5}'`  
+       /sbin/netinfc set IP `ifconfig $netif | grep inet | awk '{print $2}' | sed -e "s/addr\://"`  
+       /sbin/netinfc set Subnet `ifconfig $netif | grep inet | awk '{print $4}' | sed -e "s/Mask\://"`
+
+       r1="`route -n | grep UG `"
+       if [ -n "$r1" ] ; then           
+         /sbin/netinfc set router `route -n | grep UG | awk '{print $2}'`
+       fi
+    fi
+}
+
+echo "[$0] all params: $*"
+[ -z "$1" ] && echo "Error: should be called from dhcpc" && exit 1
+
+
+case "$1" in
+	start)
+	   # [Start]
+		if [ -z "$2" ] ; then
+		  echo "Please define network interface"
+		  exit 1
+		fi	
+		echo -n "[Starting] dhcp client on interface $2 ... "
+		if [ -z "$3" ] ; then
+		  echo "Please define netinfo tmp"
+		  exit 1
+		fi
+		if [ -z "$4" ] ; then
+		  echo "Please define netinf daemon is used or not"
+		  exit 1
+		fi
+		start $2 $3 $4
+		;;
+	stop)		
+	   # [Stop]
+		if [ -z "$2" ] ; then
+		  echo "Please define network interface"
+		  exit 1
+		fi
+		if [ -z "$3" ] ; then
+		  echo "Please define netinfo tmp"
+		  exit 1
+		fi
+		echo -n "[Stoping] dhcp client on interface $2 ... "
+		stop $2 $3
+		;;		
+	show)
+		# [Show]
+		if [ -z "$2" ] ; then
+		  echo "Please define network interface"
+		  exit 1
+		fi
+		if [ -z "$3" ] ; then
+		  echo "Please define netinfo tmp"
+		  exit 1
+		fi
+		netif=$2
+		tmp=$3
+		cat /dev/null > $tmp
+       ifconfig $netif | grep HWaddr | awk '{print "MAC " $5}' > $tmp
+       ifconfig $netif | grep inet | awk '{print $2}' | sed -e "s/addr\://" | awk '{print "IP " $0}' >> $tmp
+       ifconfig $netif | grep inet | awk '{print $4}' | sed -e "s/Mask\://" | awk '{print "Subnet " $0}' >> $tmp
+       route -n | grep "$2" | grep UG | awk '{print "router " $2}' >> $tmp
+       cat /etc/resolv.conf | grep nameserver | awk '{print "DNS " $2}' >> $tmp       
+       ret=$?       
+		;;	
+	restart)		
+	   # [Restart]
+		if [ -z "$2" ] ; then
+		  echo "Please define network interface"
+		  exit 1
+		fi
+		echo -n "[Restarting] dhcp client on interface $2 ... "
+		if [ -z "$3" ] ; then
+		  echo "Please define netinfo tmp"
+		  exit 1
+		fi
+		if [ -z "$4" ] ; then
+		  echo "Please define netinf daemon is used or not"
+		  exit 1
+		fi
+		start $2 $3 $4
+		;;	
+	*)
+		usage
+	;;	
+esac
+
+if [ $ret = 0 ] ; then
+	echo " OK"
+	exit 0
+else
+	echo " FAIL"
+	exit 1
+fi 

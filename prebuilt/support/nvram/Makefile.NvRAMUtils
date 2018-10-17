@@ -1,0 +1,11 @@
+INSTALL = 
+UNINSTALL = 
+NAME = NvRAMUtils
+LIB     = lib$(NAME).a lib$(NAME).so
+
+include $(PREFIX)/Makefile.prebuilt.template
+
+all:
+
+
+

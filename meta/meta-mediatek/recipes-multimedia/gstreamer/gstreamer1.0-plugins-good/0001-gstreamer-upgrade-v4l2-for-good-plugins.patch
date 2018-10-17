@@ -1,0 +1,3333 @@
+From 135749a0e0bc337e428888edc120feaf268bbda5 Mon Sep 17 00:00:00 2001
+From: Changtao Hu <changtao.hu@mediatek.com>
+Date: Tue, 27 Jun 2017 13:56:42 +0800
+Subject: [PATCH] gstreamer upgrade: v4l2 for good plugins
+
+Make patch for gstreamer upgrade
+Test: OK
+
+Change-Id: Icb4e241d2e86b2cf3b12e543a1df09ce8b264a5d
+Signed-off-by: Changtao Hu <changtao.hu@mediatek.com>
+CR-Id: AUTO00005189
+---
+ sys/v4l2/Makefile.am         |  11 +-
+ sys/v4l2/ext/videodev2.h     |  17 +
+ sys/v4l2/gstv4l2.c           |  13 +-
+ sys/v4l2/gstv4l2bufferpool.c | 113 ++++-
+ sys/v4l2/gstv4l2h264enc.c    | 204 +++++++++
+ sys/v4l2/gstv4l2h264enc.h    |  63 +++
+ sys/v4l2/gstv4l2mtkjpegdec.c | 183 +++++++++
+ sys/v4l2/gstv4l2mtkjpegdec.h |  63 +++
+ sys/v4l2/gstv4l2mtkvpudec.c  | 181 ++++++++
+ sys/v4l2/gstv4l2mtkvpudec.h  |  63 +++
+ sys/v4l2/gstv4l2object.c     | 564 ++++++++++++++++++++++++-
+ sys/v4l2/gstv4l2object.h     |   5 +
+ sys/v4l2/gstv4l2src.c        |   2 +-
+ sys/v4l2/gstv4l2videodec.c   | 225 +++++++++-
+ sys/v4l2/gstv4l2videoenc.c   | 958 +++++++++++++++++++++++++++++++++++++++++++
+ sys/v4l2/gstv4l2videoenc.h   | 103 +++++
+ sys/v4l2/v4l2_calls.c        |  31 +-
+ 17 files changed, 2780 insertions(+), 19 deletions(-)
+ mode change 100644 => 100755 sys/v4l2/Makefile.am
+ mode change 100644 => 100755 sys/v4l2/ext/videodev2.h
+ mode change 100644 => 100755 sys/v4l2/gstv4l2.c
+ mode change 100644 => 100755 sys/v4l2/gstv4l2bufferpool.c
+ create mode 100755 sys/v4l2/gstv4l2h264enc.c
+ create mode 100755 sys/v4l2/gstv4l2h264enc.h
+ create mode 100755 sys/v4l2/gstv4l2mtkjpegdec.c
+ create mode 100755 sys/v4l2/gstv4l2mtkjpegdec.h
+ create mode 100755 sys/v4l2/gstv4l2mtkvpudec.c
+ create mode 100755 sys/v4l2/gstv4l2mtkvpudec.h
+ mode change 100644 => 100755 sys/v4l2/gstv4l2object.c
+ mode change 100644 => 100755 sys/v4l2/gstv4l2object.h
+ mode change 100644 => 100755 sys/v4l2/gstv4l2src.c
+ mode change 100644 => 100755 sys/v4l2/gstv4l2videodec.c
+ create mode 100755 sys/v4l2/gstv4l2videoenc.c
+ create mode 100755 sys/v4l2/gstv4l2videoenc.h
+ mode change 100644 => 100755 sys/v4l2/v4l2_calls.c
+
+diff --git a/sys/v4l2/Makefile.am b/sys/v4l2/Makefile.am
+old mode 100644
+new mode 100755
+index 5ccea1a..eb48423
+--- a/sys/v4l2/Makefile.am
++++ b/sys/v4l2/Makefile.am
+@@ -14,6 +14,10 @@ libgstvideo4linux2_la_SOURCES = gstv4l2.c \
+ 				gstv4l2tuner.c \
+ 				gstv4l2transform.c \
+ 				gstv4l2videodec.c \
++				gstv4l2mtkvpudec.c \
++				gstv4l2mtkjpegdec.c \
++				gstv4l2videoenc.c \
++				gstv4l2h264enc.c \
+ 				gstv4l2vidorient.c \
+ 				v4l2_calls.c \
+ 				v4l2-utils.c \
+@@ -37,7 +41,8 @@ libgstvideo4linux2_la_LIBADD =   $(GST_PLUGINS_BASE_LIBS) \
+ 				 $(GST_LIBS) \
+ 				 $(LIBV4L2_LIBS) \
+ 				 $(GUDEV_LIBS) \
+-				 $(LIBRT)
++				 $(LIBRT) \
++				 -lmtkconv
+ 
+ noinst_HEADERS = \
+ 	ext/types-compat.h \
+@@ -55,6 +60,10 @@ noinst_HEADERS = \
+ 	gstv4l2tuner.h \
+ 	gstv4l2transform.h \
+ 	gstv4l2videodec.h \
++	gstv4l2mtkvpudec.h \
++	gstv4l2mtkjpegdec.h \
++	gstv4l2videoenc.h \
++	gstv4l2h264enc.h \
+ 	gstv4l2vidorient.h \
+ 	v4l2_calls.h \
+ 	v4l2-utils.h \
+diff --git a/sys/v4l2/ext/videodev2.h b/sys/v4l2/ext/videodev2.h
+old mode 100644
+new mode 100755
+index 68e82be..9a9bcd0
+--- a/sys/v4l2/ext/videodev2.h
++++ b/sys/v4l2/ext/videodev2.h
+@@ -525,6 +525,7 @@ struct v4l2_pix_format {
+ #define V4L2_PIX_FMT_NV61M   v4l2_fourcc('N', 'M', '6', '1') /* 16  Y/CrCb 4:2:2  */
+ #define V4L2_PIX_FMT_NV12MT  v4l2_fourcc('T', 'M', '1', '2') /* 12  Y/CbCr 4:2:0 64x32 macroblocks */
+ #define V4L2_PIX_FMT_NV12MT_16X16 v4l2_fourcc('V', 'M', '1', '2') /* 12  Y/CbCr 4:2:0 16x16 macroblocks */
++#define V4L2_PIX_FMT_MT21    v4l2_fourcc('M', 'T', '2', '1')
+ 
+ /* three non contiguous planes - Y, Cb, Cr */
+ #define V4L2_PIX_FMT_YUV420M v4l2_fourcc('Y', 'M', '1', '2') /* 12  YUV420 planar */
+@@ -565,17 +566,27 @@ struct v4l2_pix_format {
+ #define V4L2_PIX_FMT_JPEG     v4l2_fourcc('J', 'P', 'E', 'G') /* JFIF JPEG     */
+ #define V4L2_PIX_FMT_DV       v4l2_fourcc('d', 'v', 's', 'd') /* 1394          */
+ #define V4L2_PIX_FMT_MPEG     v4l2_fourcc('M', 'P', 'E', 'G') /* MPEG-1/2/4 Multiplexed */
++#define V4L2_PIX_FMT_H265     v4l2_fourcc('H', '2', '6', '5') /* H265 with start codes */
+ #define V4L2_PIX_FMT_H264     v4l2_fourcc('H', '2', '6', '4') /* H264 with start codes */
+ #define V4L2_PIX_FMT_H264_NO_SC v4l2_fourcc('A', 'V', 'C', '1') /* H264 without start codes */
+ #define V4L2_PIX_FMT_H264_MVC v4l2_fourcc('M', '2', '6', '4') /* H264 MVC */
+ #define V4L2_PIX_FMT_H263     v4l2_fourcc('H', '2', '6', '3') /* H263          */
++#define V4L2_PIX_FMT_S263     v4l2_fourcc('S', '2', '6', '3') /* S263          */
+ #define V4L2_PIX_FMT_MPEG1    v4l2_fourcc('M', 'P', 'G', '1') /* MPEG-1 ES     */
+ #define V4L2_PIX_FMT_MPEG2    v4l2_fourcc('M', 'P', 'G', '2') /* MPEG-2 ES     */
+ #define V4L2_PIX_FMT_MPEG4    v4l2_fourcc('M', 'P', 'G', '4') /* MPEG-4 part 2 ES */
++#define V4L2_PIX_FMT_RV30    v4l2_fourcc('R', 'V', '3', '0') /* RV30 ES */
++#define V4L2_PIX_FMT_RV40    v4l2_fourcc('R', 'V', '4', '0') /* RV40 ES */
+ #define V4L2_PIX_FMT_XVID     v4l2_fourcc('X', 'V', 'I', 'D') /* Xvid           */
++#define V4L2_PIX_FMT_DIVX     v4l2_fourcc('D', 'I', 'V', 'X') /* Divx           */
++#define V4L2_PIX_FMT_DIVX3    v4l2_fourcc('D', 'I', 'V', '3') /* Divx3           */
++#define V4L2_PIX_FMT_DIVX4    v4l2_fourcc('D', 'I', 'V', '4') /* Divx4           */
++#define V4L2_PIX_FMT_DIVX5    v4l2_fourcc('D', 'I', 'V', '5') /* Divx5           */
++#define V4L2_PIX_FMT_DIVX6    v4l2_fourcc('D', 'I', 'V', '6') /* Divx6           */
+ #define V4L2_PIX_FMT_VC1_ANNEX_G v4l2_fourcc('V', 'C', '1', 'G') /* SMPTE 421M Annex G compliant stream */
+ #define V4L2_PIX_FMT_VC1_ANNEX_L v4l2_fourcc('V', 'C', '1', 'L') /* SMPTE 421M Annex L compliant stream */
+ #define V4L2_PIX_FMT_VP8      v4l2_fourcc('V', 'P', '8', '0') /* VP8 */
++#define V4L2_PIX_FMT_VP9      v4l2_fourcc('V', 'P', '9', '0') /* VP9 */
+ 
+ /*  Vendor-specific formats   */
+ #define V4L2_PIX_FMT_CPIA1    v4l2_fourcc('C', 'P', 'I', 'A') /* cpia1 YUV */
+@@ -605,6 +616,12 @@ struct v4l2_pix_format {
+ #define V4L2_PIX_FMT_SE401      v4l2_fourcc('S', '4', '0', '1') /* se401 janggu compressed rgb */
+ #define V4L2_PIX_FMT_S5C_UYVY_JPG v4l2_fourcc('S', '5', 'C', 'I') /* S5C73M3 interleaved UYVY/JPEG */
+ 
++#define V4L2_PIX_FMT_WMV1	v4l2_fourcc('W', 'M', 'V', '1') /* WMV7 */
++#define V4L2_PIX_FMT_WMV2	v4l2_fourcc('W', 'M', 'V', '2') /* WMV8 */
++#define V4L2_PIX_FMT_WMV3	v4l2_fourcc('W', 'M', 'V', '3') /* WMV9 */
++#define V4L2_PIX_FMT_WMVA	v4l2_fourcc('W', 'M', 'V', 'A') /* WMVA */
++#define V4L2_PIX_FMT_WVC1	v4l2_fourcc('W', 'V', 'C', '1') /* VC1 */
++
+ /* SDR formats - used only for Software Defined Radio devices */
+ #define V4L2_SDR_FMT_CU8          v4l2_fourcc('C', 'U', '0', '8') /* IQ u8 */
+ #define V4L2_SDR_FMT_CU16LE       v4l2_fourcc('C', 'U', '1', '6') /* IQ u16le */
+diff --git a/sys/v4l2/gstv4l2.c b/sys/v4l2/gstv4l2.c
+old mode 100644
+new mode 100755
+index 83fcc98..1375c11
+--- a/sys/v4l2/gstv4l2.c
++++ b/sys/v4l2/gstv4l2.c
+@@ -49,6 +49,9 @@
+ #include "gstv4l2videodec.h"
+ #include "gstv4l2deviceprovider.h"
+ #include "gstv4l2transform.h"
++#include "gstv4l2h264enc.h"
++#include "gstv4l2mtkvpudec.h"
++#include "gstv4l2mtkjpegdec.h"
+ 
+ /* used in v4l2_calls.c and v4l2src_calls.c */
+ GST_DEBUG_CATEGORY (v4l2_debug);
+@@ -177,8 +180,14 @@ gst_v4l2_probe_and_register (GstPlugin * plugin)
+ 
+     basename = g_path_get_basename (it->device_path);
+ 
+-    if (gst_v4l2_is_video_dec (sink_caps, src_caps))
+-      ret = gst_v4l2_video_dec_register (plugin, basename, it->device_path,
++    if (gst_v4l2_is_mtk_jpeg_dec (sink_caps, src_caps))
++      ret = gst_v4l2_mtk_jpeg_dec_register (plugin, basename, it->device_path,
++          sink_caps, src_caps);
++    else if (gst_v4l2_is_mtk_vpu_dec (sink_caps, src_caps))
++      ret = gst_v4l2_mtk_vpu_dec_register (plugin, basename, it->device_path,
++          sink_caps, src_caps);
++    else if (gst_v4l2_is_h264_enc (sink_caps, src_caps))
++      ret = gst_v4l2_h264_enc_register (plugin, basename, it->device_path,
+           sink_caps, src_caps);
+     else if (gst_v4l2_is_transform (sink_caps, src_caps))
+       ret = gst_v4l2_transform_register (plugin, basename, it->device_path,
+diff --git a/sys/v4l2/gstv4l2bufferpool.c b/sys/v4l2/gstv4l2bufferpool.c
+old mode 100644
+new mode 100755
+index 3184bd8..86ed7e9
+--- a/sys/v4l2/gstv4l2bufferpool.c
++++ b/sys/v4l2/gstv4l2bufferpool.c
+@@ -46,6 +46,8 @@
+ #include "gst/gst-i18n-plugin.h"
+ #include <gst/glib-compat-private.h>
+ 
++#include "libmtkconv.h"
++
+ GST_DEBUG_CATEGORY_STATIC (v4l2bufferpool_debug);
+ GST_DEBUG_CATEGORY_STATIC (CAT_PERFORMANCE);
+ #define GST_CAT_DEFAULT v4l2bufferpool_debug
+@@ -69,6 +71,79 @@ enum _GstV4l2BufferPoolAcquireFlags
+ static void gst_v4l2_buffer_pool_release_buffer (GstBufferPool * bpool,
+     GstBuffer * buffer);
+ 
++static guint checksum(guint8 *data, guint size)
++{
++  guint i = 0, sum = 0;
++  
++  for (i = 0; i < size; i++)
++    sum += data[i];
++  return sum;
++}
++
++static GstFlowReturn
++gst_v4l2_buffer_tran_buffer(GstBuffer * dst, GstBuffer * src, GstVideoInfo * info)
++{
++  GstMapInfo inmap[2], outmap;
++  GstFlowReturn ret = GST_FLOW_ERROR;
++  guint i, j, n_mem;
++  GstMemory *mem;
++  GstVideoMeta *meta;
++
++  //GST_ERROR("dst n_mem: %d", gst_buffer_n_memory(dst));
++
++  if (gst_buffer_get_size(dst) < info->size) {
++    goto end;
++  }
++
++  n_mem = gst_buffer_n_memory(src);
++  if (n_mem != 2)
++    goto end;
++
++  for (i = 0; i < n_mem; i++) {
++    mem = gst_buffer_peek_memory (src, i);
++    if(!gst_memory_map (mem, &inmap[i], GST_MAP_READ))
++      goto src_map_err;
++  }
++
++  if (!gst_buffer_map (dst, &outmap, GST_MAP_WRITE)) {
++    goto dst_map_err;
++  }
++
++  switch (GST_VIDEO_INFO_FORMAT(info)) {
++    case GST_VIDEO_FORMAT_RGB16:
++      if (do_b_to_rgb16(outmap.data, inmap[0].data, inmap[1].data, info->width, info->height))
++        goto process_err;
++      break;
++    case GST_VIDEO_FORMAT_NV12:
++    case GST_VIDEO_FORMAT_MT21:
++      if (do_b_to_nv12(outmap.data, outmap.data + info->offset[1], inmap[0].data, inmap[1].data, info->width, info->height))
++        goto process_err;
++      break;
++    case GST_VIDEO_FORMAT_I420:
++      if (do_b_to_i420(outmap.data, outmap.data + info->offset[1], outmap.data + info->offset[2], inmap[0].data, inmap[1].data, info->width, info->height))
++        goto process_err;
++      break;
++    case GST_VIDEO_FORMAT_YUY2:
++      if (do_b_to_yuy2(outmap.data, inmap[0].data, inmap[1].data, info->width, info->height))
++        goto process_err;
++      break;
++    default:
++      goto process_err;
++      break;
++  }
++
++  ret = GST_FLOW_OK;
++process_err:
++  gst_buffer_unmap (dst, &outmap);
++src_map_err:
++dst_map_err:
++  for (j = 0; j < i; j++)
++    gst_memory_unmap (inmap[j].memory, &inmap[j]);
++end:
++  return ret;
++}
++
++
+ static gboolean
+ gst_v4l2_is_buffer_valid (GstBuffer * buffer, GstV4l2MemoryGroup ** out_group)
+ {
+@@ -1722,6 +1797,7 @@ gst_v4l2_buffer_pool_process (GstV4l2BufferPool * pool, GstBuffer ** buf)
+         case GST_V4L2_IO_DMABUF:
+         {
+           GstBuffer *tmp;
++          struct v4l2_pix_format *pix_fmt = &(obj->format.fmt.pix);
+ 
+           if ((*buf)->pool == bpool) {
+             guint num_queued;
+@@ -1756,7 +1832,7 @@ gst_v4l2_buffer_pool_process (GstV4l2BufferPool * pool, GstBuffer ** buf)
+             }
+ 
+             /* start copying buffers when we are running low on buffers */
+-            if (num_queued < pool->copy_threshold) {
++            if (num_queued < pool->copy_threshold || pix_fmt->pixelformat == V4L2_PIX_FMT_MT21) {
+               GstBuffer *copy;
+ 
+               if (GST_V4L2_ALLOCATOR_CAN_ALLOCATE (pool->vallocator, MMAP)) {
+@@ -1765,11 +1841,27 @@ gst_v4l2_buffer_pool_process (GstV4l2BufferPool * pool, GstBuffer ** buf)
+                   goto done;
+               }
+ 
+-              /* copy the buffer */
++#ifdef GST_V4L2_DECODER_OUTPUT_DEBUG
++              if (pix_fmt->pixelformat == V4L2_PIX_FMT_MT21)
++              {
++                copy = gst_buffer_new_allocate (NULL, obj->info.size, NULL);
++                ret = gst_v4l2_buffer_tran_buffer(copy, *buf, &obj->info);
++                if (ret != GST_FLOW_OK)
++                  gst_buffer_replace (&copy, NULL);
++              }
++              else
++              {
++                /* copy the buffer */
++                copy = gst_buffer_copy_region (*buf,
++                    GST_BUFFER_COPY_ALL | GST_BUFFER_COPY_DEEP, 0, -1);
++                GST_LOG_OBJECT (pool, "copy buffer %p->%p", *buf, copy);
++              }
++
++#else
+               copy = gst_buffer_copy_region (*buf,
+-                  GST_BUFFER_COPY_ALL | GST_BUFFER_COPY_DEEP, 0, -1);
++                    GST_BUFFER_COPY_ALL | GST_BUFFER_COPY_DEEP, 0, -1);
+               GST_LOG_OBJECT (pool, "copy buffer %p->%p", *buf, copy);
+-
++#endif
+               /* and requeue so that we can continue capturing */
+               gst_buffer_unref (*buf);
+               *buf = copy;
+@@ -1796,8 +1888,19 @@ gst_v4l2_buffer_pool_process (GstV4l2BufferPool * pool, GstBuffer ** buf)
+             else
+               goto eos;
+           }
+-
++          
++#ifdef GST_V4L2_DECODER_OUTPUT_DEBUG
++          if (pix_fmt->pixelformat == V4L2_PIX_FMT_MT21)
++          {
++            ret = gst_v4l2_buffer_tran_buffer(*buf, tmp, &obj->info);
++          }
++          else
++            ret = gst_v4l2_buffer_pool_copy_buffer (pool, *buf, tmp);
++#else
+           ret = gst_v4l2_buffer_pool_copy_buffer (pool, *buf, tmp);
++#endif
++
++          GST_BUFFER_TIMESTAMP(*buf) = GST_BUFFER_TIMESTAMP(tmp);
+ 
+           /* an queue the buffer again after the copy */
+           gst_v4l2_buffer_pool_release_buffer (bpool, tmp);
+diff --git a/sys/v4l2/gstv4l2h264enc.c b/sys/v4l2/gstv4l2h264enc.c
+new file mode 100755
+index 0000000..bd7d34d
+--- /dev/null
++++ b/sys/v4l2/gstv4l2h264enc.c
+@@ -0,0 +1,204 @@
++/*
++ * Copyright (C) 2014 ayaka <ayaka@soulik.info>
++ * Copyright (C) 2016 Rick Chang <rick.chang@mediatek.com>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Library General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Library General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
++ * Boston, MA 02110-1301, USA.
++ *
++ */
++
++#ifdef HAVE_CONFIG_H
++#include "config.h"
++#endif
++
++#include <sys/stat.h>
++#include <fcntl.h>
++#include <errno.h>
++#include <unistd.h>
++#include <string.h>
++
++#include "gstv4l2h264enc.h"
++#include "v4l2_calls.h"
++
++#include <string.h>
++#include <gst/gst-i18n-plugin.h>
++
++GST_DEBUG_CATEGORY_STATIC (gst_v4l2_h264_enc_debug);
++#define GST_CAT_DEFAULT gst_v4l2_h264_enc_debug
++
++typedef struct
++{
++  gchar *device;
++  GstCaps *sink_caps;
++  GstCaps *src_caps;
++} GstV4l2VideoEncCData;
++
++enum
++{
++  PROP_0,
++  V4L2_STD_OBJECT_PROPS,
++};
++
++static GstStaticPadTemplate src_template = 
++GST_STATIC_PAD_TEMPLATE("src",
++    GST_PAD_SRC,
++    GST_PAD_ALWAYS,
++    GST_STATIC_CAPS(
++      "video/x-h264, "
++      "stream-format = (string) byte-stream, "
++      "alignment = (string) { au }; "
++    )
++);
++
++#define gst_v4l2_h264_enc_parent_class parent_class
++G_DEFINE_TYPE (GstV4l2H264Enc, gst_v4l2_h264_enc, GST_TYPE_V4L2_VIDEO_ENC);
++
++static GstFlowReturn
++gst_v4l2_h264_enc_handle_frame (GstVideoEncoder * encoder,
++    GstVideoCodecFrame * frame)
++{
++  GstV4l2VideoEnc *parent = GST_V4L2_VIDEO_ENC (encoder);
++  GstStructure *structure;
++  GstCaps *outcaps;
++
++  if (G_UNLIKELY (!GST_V4L2_IS_ACTIVE (parent->v4l2capture))) {
++    outcaps = gst_caps_new_empty_simple ("video/x-h264");
++    structure = gst_caps_get_structure (outcaps, 0);
++    gst_structure_set (structure, "stream-format",
++        G_TYPE_STRING, "byte-stream", NULL);
++    gst_structure_set (structure, "alignment", G_TYPE_STRING, "au", NULL);
++    return GST_V4L2_VIDEO_ENC_CLASS (parent_class)->handle_frame
++        (encoder, frame, outcaps);
++  }
++
++  return GST_V4L2_VIDEO_ENC_CLASS (parent_class)->handle_frame
++      (encoder, frame, NULL);
++}
++
++static void
++gst_v4l2_h264_enc_init (GstV4l2H264Enc * self)
++{
++
++}
++
++static void
++gst_v4l2_h264_enc_class_init (GstV4l2H264EncClass * klass)
++{
++  GstElementClass *element_class;
++  GObjectClass *gobject_class;
++  GstV4l2VideoEncClass *v4l2_encoder_class;
++  GstVideoEncoderClass *baseclass;
++
++  parent_class = g_type_class_peek_parent (klass);
++
++  element_class = (GstElementClass *) klass;
++  gobject_class = (GObjectClass *) klass;
++  v4l2_encoder_class = GST_V4L2_VIDEO_ENC_CLASS (klass);
++  baseclass = GST_VIDEO_ENCODER_CLASS (klass);
++
++  GST_DEBUG_CATEGORY_INIT (gst_v4l2_h264_enc_debug, "v4l2mtkh264enc", 0,
++      "V4L2 Mtk H.264 HW Encoder");
++
++  gst_element_class_set_static_metadata (element_class,
++      "V4L2 Mtk H.264 HW Encoder",
++      "Codec/Encoder/Video",
++      "MTK H.264 HW encode via V4L2 API",
++      "ayaka <ayaka@soulik.info>\n"
++      "Rick Chang <rick.chang@mediatek.com>");
++
++  /* FIXME propose_allocation or not ? */
++  baseclass->handle_frame = GST_DEBUG_FUNCPTR (gst_v4l2_h264_enc_handle_frame);
++}
++
++/* Probing functions */
++gboolean
++gst_v4l2_is_h264_enc (GstCaps * sink_caps, GstCaps * src_caps)
++{
++  gboolean ret = FALSE;
++
++  if (gst_caps_is_subset (sink_caps, gst_v4l2_object_get_raw_caps ())
++      && gst_caps_can_intersect (src_caps,
++          gst_caps_from_string ("video/x-h264")))
++    ret = TRUE;
++
++  return ret;
++}
++
++static void
++gst_v4l2_h264_enc_subinstance_init (GTypeInstance * instance, gpointer g_class)
++{
++  GstV4l2VideoEncClass *klass = GST_V4L2_VIDEO_ENC_CLASS (g_class);
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (instance);
++
++  g_free (self->v4l2output->videodev);
++  self->v4l2output->videodev = g_strdup (klass->default_device);
++
++  g_free (self->v4l2capture->videodev);
++  self->v4l2capture->videodev = g_strdup (klass->default_device);
++}
++
++static void
++gst_v4l2_h264_enc_subclass_init (gpointer g_class, gpointer data)
++{
++  GstV4l2VideoEncClass *klass = GST_V4L2_VIDEO_ENC_CLASS (g_class);
++  GstElementClass *element_class = GST_ELEMENT_CLASS (g_class);
++  GstV4l2VideoEncCData *cdata = data;
++
++  klass->default_device = cdata->device;
++
++  /* Note: gst_pad_template_new() take the floating ref from the caps */
++  gst_element_class_add_pad_template (element_class,
++      gst_pad_template_new ("sink", GST_PAD_SINK, GST_PAD_ALWAYS,
++          cdata->sink_caps));
++  gst_element_class_add_pad_template (element_class,
++      gst_static_pad_template_get(&src_template));
++
++  g_free (cdata);
++}
++
++gboolean
++gst_v4l2_h264_enc_register (GstPlugin * plugin, const gchar * basename,
++    const gchar * device_path, GstCaps * sink_caps, GstCaps * src_caps)
++{
++  GTypeQuery type_query;
++  GTypeInfo type_info = { 0, };
++  GType type, subtype;
++  gchar *type_name;
++  GstV4l2VideoEncCData *cdata;
++
++  cdata = g_new0 (GstV4l2VideoEncCData, 1);
++  cdata->device = g_strdup (device_path);
++  cdata->sink_caps = gst_caps_ref (sink_caps);
++  cdata->src_caps = gst_caps_ref (src_caps);
++
++  type = gst_v4l2_h264_enc_get_type();
++  g_type_query (type, &type_query);
++  memset (&type_info, 0, sizeof (type_info));
++  type_info.class_size = type_query.class_size;
++  type_info.instance_size = type_query.instance_size;
++  type_info.class_data = cdata;
++
++  type_info.class_init = gst_v4l2_h264_enc_subclass_init;
++  type_info.instance_init = gst_v4l2_h264_enc_subinstance_init;
++
++  type_name = g_strdup_printf ("v4l2mtkh264enc");
++  subtype = g_type_register_static (type, type_name, &type_info, 0);
++
++  gst_element_register (plugin, type_name, GST_RANK_PRIMARY + 1, subtype);
++
++  g_free (type_name);
++
++  return TRUE;
++}
+diff --git a/sys/v4l2/gstv4l2h264enc.h b/sys/v4l2/gstv4l2h264enc.h
+new file mode 100755
+index 0000000..f0f6cbb
+--- /dev/null
++++ b/sys/v4l2/gstv4l2h264enc.h
+@@ -0,0 +1,63 @@
++/*
++ * Copyright (C) 2014 SUMOMO Computer Association.
++ *     Author: ayaka <ayaka@soulik.info>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Library General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Library General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
++ * Boston, MA 02110-1301, USA.
++ *
++ */
++
++#ifndef __GST_V4L2_H264_ENC_H__
++#define __GST_V4L2_H264_ENC_H__
++
++#include <gst/gst.h>
++#include "gstv4l2videoenc.h"
++
++GST_DEBUG_CATEGORY_EXTERN (v4l2h264enc_debug);
++
++G_BEGIN_DECLS
++#define GST_TYPE_V4L2_H264_ENC \
++  (gst_v4l2_h264_enc_get_type())
++#define GST_V4L2_H264_ENC(obj) \
++  (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_V4L2_H264_ENC,GstV4l2H264Enc))
++#define GST_V4L2_H264_ENC_CLASS(klass) \
++  (G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_V4L2_H264_ENC,GstV4l2H264EncClass))
++#define GST_IS_V4L2_H264_ENC(obj) \
++  (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_V4L2_H264_ENC))
++#define GST_IS_V4L2_H264_ENC_CLASS(obj) \
++  (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_V4L2_H264_ENC))
++typedef struct _GstV4l2H264Enc GstV4l2H264Enc;
++typedef struct _GstV4l2H264EncClass GstV4l2H264EncClass;
++
++struct _GstV4l2H264Enc
++{
++  GstV4l2VideoEnc parent;
++};
++
++struct _GstV4l2H264EncClass
++{
++  GstV4l2VideoEncClass parent_class;
++};
++
++GType gst_v4l2_h264_enc_get_type (void);
++
++gboolean gst_v4l2_is_h264_enc (GstCaps * sink_caps, GstCaps * src_caps);
++
++gboolean gst_v4l2_h264_enc_register (GstPlugin * plugin,
++    const gchar * basename,
++    const gchar * device_path, GstCaps * sink_caps, GstCaps * src_caps);
++
++G_END_DECLS
++#endif /* __GST_V4L2_H264_ENC_H__ */
+diff --git a/sys/v4l2/gstv4l2mtkjpegdec.c b/sys/v4l2/gstv4l2mtkjpegdec.c
+new file mode 100755
+index 0000000..6b785bf
+--- /dev/null
++++ b/sys/v4l2/gstv4l2mtkjpegdec.c
+@@ -0,0 +1,183 @@
++/*
++ * Copyright (c) 2016 MediaTek Inc
++ *     Author: Rick Chang <rick.chang@mediatek.com>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Library General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Library General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
++ * Boston, MA 02110-1301, USA.
++ *
++ */
++
++#ifdef HAVE_CONFIG_H
++#include "config.h"
++#endif
++
++#include <sys/stat.h>
++#include <fcntl.h>
++#include <errno.h>
++#include <unistd.h>
++#include <string.h>
++
++#include "gstv4l2mtkjpegdec.h"
++#include "v4l2_calls.h"
++
++#include <string.h>
++#include <gst/gst-i18n-plugin.h>
++
++GST_DEBUG_CATEGORY_STATIC (gst_v4l2_mtk_jpeg_dec_debug);
++#define GST_CAT_DEFAULT gst_v4l2_mtk_jpeg_dec_debug
++
++typedef struct
++{
++  gchar *device;
++  GstCaps *sink_caps;
++  GstCaps *src_caps;
++} GstV4l2MtkJpegDecCData;
++
++enum
++{
++  PROP_0,
++  V4L2_STD_OBJECT_PROPS,
++};
++
++static GstStaticPadTemplate gst_mtk_jpeg_src_template =
++GST_STATIC_PAD_TEMPLATE ("src",
++    GST_PAD_SRC,
++    GST_PAD_ALWAYS,
++    GST_STATIC_CAPS (GST_VIDEO_CAPS_MAKE ("{ "
++            "I420, Y42B } "))
++    );
++
++#define gst_v4l2_mtk_jpeg_dec_parent_class parent_class
++G_DEFINE_TYPE (GstV4l2MtkJpegDec, gst_v4l2_mtk_jpeg_dec, GST_TYPE_V4L2_VIDEO_DEC);
++
++static void
++gst_v4l2_mtk_jpeg_dec_init (GstV4l2MtkJpegDec * self)
++{
++}
++
++static void
++gst_v4l2_mtk_jpeg_dec_subinstance_init (GTypeInstance * instance, gpointer g_class)
++{
++  GstV4l2VideoDecClass *klass = GST_V4L2_VIDEO_DEC_CLASS (g_class);
++  GstV4l2VideoDec *self = GST_V4L2_VIDEO_DEC (instance);
++  GstVideoDecoder *decoder = GST_VIDEO_DECODER (instance);
++
++  gst_video_decoder_set_packetized (decoder, TRUE);
++
++  self->v4l2output = gst_v4l2_object_new (GST_ELEMENT (self),
++      V4L2_BUF_TYPE_VIDEO_OUTPUT, klass->default_device,
++      gst_v4l2_get_output, gst_v4l2_set_output, NULL);
++  self->v4l2output->no_initial_format = TRUE;
++  self->v4l2output->keep_aspect = FALSE;
++
++  self->v4l2capture = gst_v4l2_object_new (GST_ELEMENT (self),
++      V4L2_BUF_TYPE_VIDEO_CAPTURE, klass->default_device,
++      gst_v4l2_get_input, gst_v4l2_set_input, NULL);
++  self->v4l2capture->no_initial_format = TRUE;
++  self->v4l2output->keep_aspect = FALSE;
++}
++
++static void
++gst_v4l2_mtk_jpeg_dec_class_init (GstV4l2MtkJpegDecClass * klass)
++{
++  GstElementClass *element_class;
++  GObjectClass *gobject_class;
++  GstV4l2VideoDecClass *v4l2_decoder_class;
++  GstVideoEncoderClass *baseclass;
++
++  parent_class = g_type_class_peek_parent (klass);
++
++  element_class = (GstElementClass *) klass;
++  gobject_class = (GObjectClass *) klass;
++  v4l2_decoder_class = GST_V4L2_VIDEO_DEC_CLASS (klass);
++  baseclass = GST_VIDEO_DECODER_CLASS (klass);
++
++  GST_DEBUG_CATEGORY_INIT (gst_v4l2_mtk_jpeg_dec_debug, "v4l2mtkjpegdec", 0,
++      "V4L2 Mtk Jpeg HW Decoder");
++
++  gst_element_class_set_static_metadata (element_class,
++      "V4L2 Mtk Jpeg HW Decoder",
++      "Codec/Decoder/Image",
++      "MTK jpeg HW decode via V4L2 API",
++      "Rick Chang <rick.chang@mediatek.com>");
++}
++
++static void
++gst_v4l2_mtk_jpeg_dec_subclass_init (gpointer g_class, gpointer data)
++{
++  GstV4l2VideoDecClass *klass = GST_V4L2_VIDEO_DEC_CLASS (g_class);
++  GstElementClass *element_class = GST_ELEMENT_CLASS (g_class);
++  GstV4l2MtkJpegDecCData *cdata = data;
++
++  klass->default_device = cdata->device;
++
++  /* Note: gst_pad_template_new() take the floating ref from the caps */
++  gst_element_class_add_pad_template (element_class,
++      gst_pad_template_new ("sink", GST_PAD_SINK, GST_PAD_ALWAYS,
++          cdata->sink_caps));
++  gst_element_class_add_pad_template (element_class,
++      gst_pad_template_new ("src", GST_PAD_SRC, GST_PAD_ALWAYS,
++          cdata->src_caps));
++
++  g_free (cdata);
++}
++
++gboolean
++gst_v4l2_is_mtk_jpeg_dec (GstCaps * sink_caps, GstCaps * src_caps)
++{
++  gboolean ret = FALSE;
++  GstCaps *caps = gst_caps_new_empty_simple ("image/jpeg");
++
++  if (gst_caps_is_subset (sink_caps, caps)
++      && gst_caps_is_subset (src_caps, gst_v4l2_object_get_raw_caps ()))
++    ret = TRUE;
++
++  gst_caps_ref (caps);
++  return ret;
++}
++
++gboolean
++gst_v4l2_mtk_jpeg_dec_register (GstPlugin * plugin, const gchar * basename,
++    const gchar * device_path, GstCaps * sink_caps, GstCaps * src_caps)
++{
++  GTypeQuery type_query;
++  GTypeInfo type_info = { 0, };
++  GType type, subtype;
++  gchar *type_name;
++  GstV4l2MtkJpegDecCData *cdata;
++
++  cdata = g_new0 (GstV4l2MtkJpegDecCData, 1);
++  cdata->device = g_strdup (device_path);
++  cdata->sink_caps = gst_caps_ref (sink_caps);
++  cdata->src_caps = gst_static_pad_template_get_caps(&gst_mtk_jpeg_src_template);
++
++  type = gst_v4l2_mtk_jpeg_dec_get_type ();
++  g_type_query (type, &type_query);
++  memset (&type_info, 0, sizeof (type_info));
++  type_info.class_size = type_query.class_size;
++  type_info.instance_size = type_query.instance_size;
++  type_info.class_init = gst_v4l2_mtk_jpeg_dec_subclass_init;
++  type_info.class_data = cdata;
++  type_info.instance_init = gst_v4l2_mtk_jpeg_dec_subinstance_init;
++
++  type_name = g_strdup_printf ("v4l2mtkjpegdec");
++  subtype = g_type_register_static (type, type_name, &type_info, 0);
++
++  gst_element_register (plugin, type_name, GST_RANK_PRIMARY + 1, subtype);
++
++  g_free (type_name);
++
++  return TRUE;
++}
+diff --git a/sys/v4l2/gstv4l2mtkjpegdec.h b/sys/v4l2/gstv4l2mtkjpegdec.h
+new file mode 100755
+index 0000000..365b236
+--- /dev/null
++++ b/sys/v4l2/gstv4l2mtkjpegdec.h
+@@ -0,0 +1,63 @@
++/*
++ * Copyright (c) 2016 MediaTek Inc
++ *     Author: Rick Chang <rick.chang@mediatek.com>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Library General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Library General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
++ * Boston, MA 02110-1301, USA.
++ *
++ */
++
++#ifndef __GST_V4L2_MTK_JPEG_DEC_H__
++#define __GST_V4L2_MTK_JPEG_DEC_H__
++
++#include <gst/gst.h>
++#include "gstv4l2videodec.h"
++
++GST_DEBUG_CATEGORY_EXTERN (v4l2mtkjpegdec_debug);
++
++G_BEGIN_DECLS
++#define GST_TYPE_V4L2_MTK_JPEG_DEC \
++  (gst_v4l2_mtk_jpeg_dec_get_type())
++#define GST_V4L2_MTK_JPEG_DEC(obj) \
++  (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_V4L2_MTK_JPEG_DEC,GstV4l2MtkJpegDec))
++#define GST_V4L2_MTK_JPEG_DEC_CLASS(klass) \
++  (G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_V4L2_MTK_JPEG_DEC,GstV4l2MtkJpegDecClass))
++#define GST_IS_V4L2_MTK_JPEG_DEC(obj) \
++  (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_V4L2_MTK_JPEG_DEC))
++#define GST_IS_V4L2_MTK_JPEG_DEC_CLASS(obj) \
++  (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_V4L2_MTK_JPEG_DEC))
++typedef struct _GstV4l2MtkJpegDec GstV4l2MtkJpegDec;
++typedef struct _GstV4l2MtkJpegDecClass GstV4l2MtkJpegDecClass;
++
++struct _GstV4l2MtkJpegDec
++{
++  GstV4l2VideoDec parent;
++};
++
++struct _GstV4l2MtkJpegDecClass
++{
++  GstV4l2VideoDecClass parent_class;
++};
++
++GType gst_v4l2_mtk_jpeg_dec_get_type (void);
++
++gboolean gst_v4l2_is_mtk_jpeg_dec (GstCaps * sink_caps, GstCaps * src_caps);
++
++gboolean gst_v4l2_mtk_jpeg_dec_register (GstPlugin * plugin,
++    const gchar * basename,
++    const gchar * device_path, GstCaps * sink_caps, GstCaps * src_caps);
++
++G_END_DECLS
++#endif /* __GST_V4L2_MTK_JPEG_DEC_H__ */
+diff --git a/sys/v4l2/gstv4l2mtkvpudec.c b/sys/v4l2/gstv4l2mtkvpudec.c
+new file mode 100755
+index 0000000..fd09362
+--- /dev/null
++++ b/sys/v4l2/gstv4l2mtkvpudec.c
+@@ -0,0 +1,181 @@
++/*
++ * Copyright (c) 2016 MediaTek Inc
++ *     Author: Rick Chang <rick.chang@mediatek.com>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Library General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Library General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
++ * Boston, MA 02110-1301, USA.
++ *
++ */
++
++#ifdef HAVE_CONFIG_H
++#include "config.h"
++#endif
++
++#include <sys/stat.h>
++#include <fcntl.h>
++#include <errno.h>
++#include <unistd.h>
++#include <string.h>
++
++#include "gstv4l2mtkvpudec.h"
++#include "v4l2_calls.h"
++
++#include <string.h>
++#include <gst/gst-i18n-plugin.h>
++
++GST_DEBUG_CATEGORY_STATIC (gst_v4l2_mtk_vpu_dec_debug);
++#define GST_CAT_DEFAULT gst_v4l2_mtk_vpu_dec_debug
++
++typedef struct
++{
++  gchar *device;
++  GstCaps *sink_caps;
++  GstCaps *src_caps;
++} GstV4l2MtkVpuDecCData;
++
++enum
++{
++  PROP_0,
++  V4L2_STD_OBJECT_PROPS,
++};
++
++static GstStaticPadTemplate gst_mtk_vpu_src_template =
++GST_STATIC_PAD_TEMPLATE ("src",
++    GST_PAD_SRC,
++    GST_PAD_ALWAYS,
++    GST_STATIC_CAPS (GST_VIDEO_CAPS_MAKE ("{ "
++            "MT21 } "))
++    );
++
++#define gst_v4l2_mtk_vpu_dec_parent_class parent_class
++G_DEFINE_TYPE (GstV4l2MtkVpuDec, gst_v4l2_mtk_vpu_dec, GST_TYPE_V4L2_VIDEO_DEC);
++
++static void
++gst_v4l2_mtk_vpu_dec_init (GstV4l2MtkVpuDec * self)
++{
++}
++
++static void
++gst_v4l2_mtk_vpu_dec_subinstance_init (GTypeInstance * instance, gpointer g_class)
++{
++  GstV4l2VideoDecClass *klass = GST_V4L2_VIDEO_DEC_CLASS (g_class);
++  GstV4l2VideoDec *self = GST_V4L2_VIDEO_DEC (instance);
++  GstVideoDecoder *decoder = GST_VIDEO_DECODER (instance);
++
++  gst_video_decoder_set_packetized (decoder, TRUE);
++
++  self->v4l2output = gst_v4l2_object_new (GST_ELEMENT (self),
++      V4L2_BUF_TYPE_VIDEO_OUTPUT, klass->default_device,
++      gst_v4l2_get_output, gst_v4l2_set_output, NULL);
++  self->v4l2output->no_initial_format = TRUE;
++  self->v4l2output->keep_aspect = FALSE;
++
++  self->v4l2capture = gst_v4l2_object_new (GST_ELEMENT (self),
++      V4L2_BUF_TYPE_VIDEO_CAPTURE, klass->default_device,
++      gst_v4l2_get_input, gst_v4l2_set_input, NULL);
++  self->v4l2capture->no_initial_format = TRUE;
++  self->v4l2output->keep_aspect = FALSE;
++}
++
++static void
++gst_v4l2_mtk_vpu_dec_class_init (GstV4l2MtkVpuDecClass * klass)
++{
++  GstElementClass *element_class;
++  GObjectClass *gobject_class;
++  GstV4l2VideoDecClass *v4l2_decoder_class;
++  GstVideoEncoderClass *baseclass;
++
++  parent_class = g_type_class_peek_parent (klass);
++
++  element_class = (GstElementClass *) klass;
++  gobject_class = (GObjectClass *) klass;
++  v4l2_decoder_class = GST_V4L2_VIDEO_DEC_CLASS (klass);
++  baseclass = GST_VIDEO_DECODER_CLASS (klass);
++
++  GST_DEBUG_CATEGORY_INIT (gst_v4l2_mtk_vpu_dec_debug, "v4l2mtkvpudec", 0,
++      "V4L2 Mtk Vpu HW Decoder");
++
++  gst_element_class_set_static_metadata (element_class,
++      "V4L2 Mtk Vpu HW Decoder",
++      "Codec/Decoder/Video",
++      "MTK video HW decode via V4L2 API",
++      "Rick Chang <rick.chang@mediatek.com>");
++}
++
++static void
++gst_v4l2_mtk_vpu_dec_subclass_init (gpointer g_class, gpointer data)
++{
++  GstV4l2VideoDecClass *klass = GST_V4L2_VIDEO_DEC_CLASS (g_class);
++  GstElementClass *element_class = GST_ELEMENT_CLASS (g_class);
++  GstV4l2MtkVpuDecCData *cdata = data;
++
++  klass->default_device = cdata->device;
++
++  /* Note: gst_pad_template_new() take the floating ref from the caps */
++  gst_element_class_add_pad_template (element_class,
++      gst_pad_template_new ("sink", GST_PAD_SINK, GST_PAD_ALWAYS,
++          cdata->sink_caps));
++  gst_element_class_add_pad_template (element_class,
++      gst_pad_template_new ("src", GST_PAD_SRC, GST_PAD_ALWAYS,
++          cdata->src_caps));
++
++  g_free (cdata);
++}
++
++gboolean
++gst_v4l2_is_mtk_vpu_dec (GstCaps * sink_caps, GstCaps * src_caps)
++{
++  gboolean ret = FALSE;
++
++  if (gst_caps_is_subset (sink_caps, gst_v4l2_object_get_codec_caps ())
++      && gst_caps_is_subset (src_caps, gst_v4l2_object_get_raw_caps ()))
++    ret = TRUE;
++
++  return ret;
++}
++
++gboolean
++gst_v4l2_mtk_vpu_dec_register (GstPlugin * plugin, const gchar * basename,
++    const gchar * device_path, GstCaps * sink_caps, GstCaps * src_caps)
++{
++  GTypeQuery type_query;
++  GTypeInfo type_info = { 0, };
++  GType type, subtype;
++  gchar *type_name;
++  GstV4l2MtkVpuDecCData *cdata;
++
++  cdata = g_new0 (GstV4l2MtkVpuDecCData, 1);
++  cdata->device = g_strdup (device_path);
++  cdata->sink_caps = gst_caps_ref (sink_caps);
++  cdata->src_caps = gst_static_pad_template_get_caps(&gst_mtk_vpu_src_template);
++
++  type = gst_v4l2_mtk_vpu_dec_get_type ();
++  g_type_query (type, &type_query);
++  memset (&type_info, 0, sizeof (type_info));
++  type_info.class_size = type_query.class_size;
++  type_info.instance_size = type_query.instance_size;
++  type_info.class_init = gst_v4l2_mtk_vpu_dec_subclass_init;
++  type_info.class_data = cdata;
++  type_info.instance_init = gst_v4l2_mtk_vpu_dec_subinstance_init;
++
++  type_name = g_strdup_printf ("v4l2mtkvpudec");
++  subtype = g_type_register_static (type, type_name, &type_info, 0);
++
++  gst_element_register (plugin, type_name, GST_RANK_PRIMARY + 1, subtype);
++
++  g_free (type_name);
++
++  return TRUE;
++}
+diff --git a/sys/v4l2/gstv4l2mtkvpudec.h b/sys/v4l2/gstv4l2mtkvpudec.h
+new file mode 100755
+index 0000000..3ba72fc
+--- /dev/null
++++ b/sys/v4l2/gstv4l2mtkvpudec.h
+@@ -0,0 +1,63 @@
++/*
++ * Copyright (c) 2016 MediaTek Inc
++ *     Author: Rick Chang <rick.chang@mediatek.com>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Library General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Library General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
++ * Boston, MA 02110-1301, USA.
++ *
++ */
++
++#ifndef __GST_V4L2_MTK_VPU_DEC_H__
++#define __GST_V4L2_MTK_VPU_DEC_H__
++
++#include <gst/gst.h>
++#include "gstv4l2videodec.h"
++
++GST_DEBUG_CATEGORY_EXTERN (v4l2mtkvpudec_debug);
++
++G_BEGIN_DECLS
++#define GST_TYPE_V4L2_MTK_VPU_DEC \
++  (gst_v4l2_mtk_vpu_dec_get_type())
++#define GST_V4L2_MTK_VPU_DEC(obj) \
++  (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_V4L2_MTK_VPU_DEC,GstV4l2MtkVpuDec))
++#define GST_V4L2_MTK_VPU_DEC_CLASS(klass) \
++  (G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_V4L2_MTK_VPU_DEC,GstV4l2MtkVpuDecClass))
++#define GST_IS_V4L2_MTK_VPU_DEC(obj) \
++  (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_V4L2_MTK_VPU_DEC))
++#define GST_IS_V4L2_MTK_VPU_DEC_CLASS(obj) \
++  (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_V4L2_MTK_VPU_DEC))
++typedef struct _GstV4l2MtkVpuDec GstV4l2MtkVpuDec;
++typedef struct _GstV4l2MtkVpuDecClass GstV4l2MtkVpuDecClass;
++
++struct _GstV4l2MtkVpuDec
++{
++  GstV4l2VideoDec parent;
++};
++
++struct _GstV4l2MtkVpuDecClass
++{
++  GstV4l2VideoDecClass parent_class;
++};
++
++GType gst_v4l2_mtk_vpu_dec_get_type (void);
++
++gboolean gst_v4l2_is_mtk_vpu_dec (GstCaps * sink_caps, GstCaps * src_caps);
++
++gboolean gst_v4l2_mtk_vpu_dec_register (GstPlugin * plugin,
++    const gchar * basename,
++    const gchar * device_path, GstCaps * sink_caps, GstCaps * src_caps);
++
++G_END_DECLS
++#endif /* __GST_V4L2_MTK_VPU_DEC_H__ */
+diff --git a/sys/v4l2/gstv4l2object.c b/sys/v4l2/gstv4l2object.c
+old mode 100644
+new mode 100755
+index 549e06f..3ac9a87
+--- a/sys/v4l2/gstv4l2object.c
++++ b/sys/v4l2/gstv4l2object.c
+@@ -55,7 +55,7 @@ GST_DEBUG_CATEGORY_EXTERN (v4l2_debug);
+ #define DEFAULT_PROP_FREQUENCY          0
+ #define DEFAULT_PROP_IO_MODE            GST_V4L2_IO_AUTO
+ 
+-#define ENCODED_BUFFER_SIZE             (1 * 1024 * 1024)
++#define ENCODED_BUFFER_SIZE             (2 * 1024 * 1024)
+ 
+ enum
+ {
+@@ -182,12 +182,30 @@ static const GstV4L2FormatDesc gst_v4l2_formats[] = {
+   {V4L2_PIX_FMT_VC1_ANNEX_G, FALSE, GST_V4L2_CODEC},
+   {V4L2_PIX_FMT_VC1_ANNEX_L, FALSE, GST_V4L2_CODEC},
+   {V4L2_PIX_FMT_VP8, FALSE, GST_V4L2_CODEC | GST_V4L2_NO_PARSE},
++  {V4L2_PIX_FMT_VP9, FALSE, GST_V4L2_CODEC | GST_V4L2_NO_PARSE},
+ 
+   /*  Vendor-specific formats   */
+   {V4L2_PIX_FMT_WNVA, TRUE, GST_V4L2_CODEC},
+   {V4L2_PIX_FMT_SN9C10X, TRUE, GST_V4L2_CODEC},
+   {V4L2_PIX_FMT_PWC1, TRUE, GST_V4L2_CODEC},
+   {V4L2_PIX_FMT_PWC2, TRUE, GST_V4L2_CODEC},
++
++  {V4L2_PIX_FMT_MT21, TRUE, GST_V4L2_RAW},
++  {V4L2_PIX_FMT_DIVX, FALSE, GST_V4L2_CODEC},
++  {V4L2_PIX_FMT_DIVX3, FALSE, GST_V4L2_CODEC | GST_V4L2_NO_PARSE},
++  {V4L2_PIX_FMT_DIVX4, FALSE, GST_V4L2_CODEC},
++  {V4L2_PIX_FMT_DIVX5, FALSE, GST_V4L2_CODEC},
++  {V4L2_PIX_FMT_DIVX6, FALSE, GST_V4L2_CODEC},
++  {V4L2_PIX_FMT_S263, FALSE, GST_V4L2_CODEC | GST_V4L2_NO_PARSE},
++  {V4L2_PIX_FMT_H265, FALSE, GST_V4L2_CODEC},
++  /*WMV not parseable */
++  {V4L2_PIX_FMT_WMV1, FALSE, GST_V4L2_CODEC | GST_V4L2_NO_PARSE},
++  {V4L2_PIX_FMT_WMV2, FALSE, GST_V4L2_CODEC | GST_V4L2_NO_PARSE},
++  {V4L2_PIX_FMT_WMV3, FALSE, GST_V4L2_CODEC | GST_V4L2_NO_PARSE},
++
++  /*realvideo not parseable */
++  {V4L2_PIX_FMT_RV30, FALSE, GST_V4L2_CODEC | GST_V4L2_NO_PARSE},
++  {V4L2_PIX_FMT_RV40, FALSE, GST_V4L2_CODEC | GST_V4L2_NO_PARSE},
+ };
+ 
+ #define GST_V4L2_FORMAT_COUNT (G_N_ELEMENTS (gst_v4l2_formats))
+@@ -1000,6 +1018,7 @@ gst_v4l2_object_format_get_rank (const struct v4l2_fmtdesc *fmt)
+     case V4L2_PIX_FMT_NV61:    /* 16  Y/CrCb 4:2:2  */
+     case V4L2_PIX_FMT_NV61M:   /* Same as NV61      */
+     case V4L2_PIX_FMT_NV24:    /* 24  Y/CrCb 4:4:4  */
++    case V4L2_PIX_FMT_MT21:
+       rank = YUV_ODD_BASE_RANK;
+       break;
+ 
+@@ -1270,6 +1289,7 @@ gst_v4l2_object_v4l2fourcc_to_video_format (guint32 fourcc)
+       format = GST_VIDEO_FORMAT_YUY2;
+       break;
+     case V4L2_PIX_FMT_YVU420:
++    case V4L2_PIX_FMT_YVU420M:
+       format = GST_VIDEO_FORMAT_YV12;
+       break;
+     case V4L2_PIX_FMT_UYVY:
+@@ -1295,6 +1315,9 @@ gst_v4l2_object_v4l2fourcc_to_video_format (guint32 fourcc)
+     case V4L2_PIX_FMT_NV24:
+       format = GST_VIDEO_FORMAT_NV24;
+       break;
++    case V4L2_PIX_FMT_MT21:
++      format = GST_VIDEO_FORMAT_MT21;
++      break;
+     default:
+       format = GST_VIDEO_FORMAT_UNKNOWN;
+       break;
+@@ -1344,22 +1367,49 @@ gst_v4l2_object_v4l2fourcc_to_bare_struct (guint32 fourcc)
+       break;
+     case V4L2_PIX_FMT_MPEG1:
+       structure = gst_structure_new ("video/mpeg",
+-          "mpegversion", G_TYPE_INT, 2, NULL);
++          "mpegversion", G_TYPE_INT, 1, NULL);
+       break;
+     case V4L2_PIX_FMT_MPEG2:
+       structure = gst_structure_new ("video/mpeg",
+           "mpegversion", G_TYPE_INT, 2, NULL);
+       break;
+     case V4L2_PIX_FMT_MPEG4:
+-    case V4L2_PIX_FMT_XVID:
+       structure = gst_structure_new ("video/mpeg",
+           "mpegversion", G_TYPE_INT, 4, "systemstream",
+           G_TYPE_BOOLEAN, FALSE, NULL);
+       break;
++    case V4L2_PIX_FMT_XVID:
++      structure = gst_structure_new_empty ("video/x-xvid");
++      break;
++    case V4L2_PIX_FMT_DIVX3:
++      structure = gst_structure_new("video/x-divx",
++          "divxversion", G_TYPE_INT, 3, NULL);
++      break;
++    case V4L2_PIX_FMT_DIVX4:
++      structure = gst_structure_new("video/x-divx",
++          "divxversion", G_TYPE_INT, 4, NULL);
++      break;
++    case V4L2_PIX_FMT_DIVX5:
++      structure = gst_structure_new("video/x-divx",
++          "divxversion", G_TYPE_INT, 5, NULL);
++      break;
++    case V4L2_PIX_FMT_DIVX6:
++      structure = gst_structure_new("video/x-divx",
++          "divxversion", G_TYPE_INT, 6, NULL);
++      break;
+     case V4L2_PIX_FMT_H263:
+       structure = gst_structure_new ("video/x-h263",
+           "variant", G_TYPE_STRING, "itu", NULL);
+       break;
++    case V4L2_PIX_FMT_S263:
++      structure = gst_structure_new ("video/x-flash-video",
++          "flvversion", G_TYPE_INT, 1, NULL);
++      break;
++    case V4L2_PIX_FMT_H265:    /* H.265 */
++      structure = gst_structure_new ("video/x-h265",
++          "stream-format", G_TYPE_STRING, "byte-stream", "alignment",
++          G_TYPE_STRING, "au", NULL);
++      break;
+     case V4L2_PIX_FMT_H264:    /* H.264 */
+       structure = gst_structure_new ("video/x-h264",
+           "stream-format", G_TYPE_STRING, "byte-stream", "alignment",
+@@ -1378,6 +1428,23 @@ gst_v4l2_object_v4l2fourcc_to_bare_struct (guint32 fourcc)
+     case V4L2_PIX_FMT_VP8:
+       structure = gst_structure_new_empty ("video/x-vp8");
+       break;
++    case V4L2_PIX_FMT_VP9:
++      structure = gst_structure_new_empty ("video/x-vp9");
++      break;
++    case V4L2_PIX_FMT_WMV1:
++    case V4L2_PIX_FMT_WMV2:
++    case V4L2_PIX_FMT_WMV3:
++    case V4L2_PIX_FMT_WMVA:
++    case V4L2_PIX_FMT_WVC1:
++      structure = gst_structure_new_empty ("video/x-wmv");
++      break;
++    case V4L2_PIX_FMT_RV30:
++    case V4L2_PIX_FMT_RV40:
++      structure = gst_structure_new_empty ("video/x-pn-realvideo");
++      break;
++    case V4L2_PIX_FMT_MT21:
++      structure = gst_structure_new_empty ("video/x-raw");
++      break;
+     case V4L2_PIX_FMT_GREY:    /*  8  Greyscale     */
+     case V4L2_PIX_FMT_Y16:
+     case V4L2_PIX_FMT_Y16_BE:
+@@ -1408,6 +1475,7 @@ gst_v4l2_object_v4l2fourcc_to_bare_struct (guint32 fourcc)
+     case V4L2_PIX_FMT_YUV410:
+     case V4L2_PIX_FMT_YUV420:  /* I420/IYUV */
+     case V4L2_PIX_FMT_YUV420M:
++    case V4L2_PIX_FMT_YVU420M:
+     case V4L2_PIX_FMT_YUYV:
+     case V4L2_PIX_FMT_YVU420:
+     case V4L2_PIX_FMT_UYVY:
+@@ -1627,6 +1695,7 @@ gst_v4l2_object_get_caps_info (GstV4l2Object * v4l2object, GstCaps * caps,
+         break;
+       case GST_VIDEO_FORMAT_YV12:
+         fourcc = V4L2_PIX_FMT_YVU420;
++        fourcc_nc = V4L2_PIX_FMT_YVU420M;
+         break;
+       case GST_VIDEO_FORMAT_Y41B:
+         fourcc = V4L2_PIX_FMT_YUV411P;
+@@ -1754,6 +1823,50 @@ gst_v4l2_object_get_caps_info (GstV4l2Object * v4l2object, GstCaps * caps,
+       fourcc = V4L2_PIX_FMT_PWC1;
+     } else if (g_str_equal (mimetype, "video/x-pwc2")) {
+       fourcc = V4L2_PIX_FMT_PWC2;
++    } else if (g_str_equal (mimetype, "video/x-xvid")) {
++      fourcc = V4L2_PIX_FMT_XVID;
++    } else if (g_str_equal (mimetype, "video/x-divx")) {
++      gint version;
++      if (gst_structure_get_int (structure, "divxversion", &version)) {
++        switch (version) {
++          case 3:
++            fourcc = V4L2_PIX_FMT_DIVX3;
++            break;
++          case 4:
++            fourcc = V4L2_PIX_FMT_DIVX4;
++            break;
++          case 5:
++            fourcc = V4L2_PIX_FMT_DIVX5;
++            break;
++          case 6:
++            fourcc = V4L2_PIX_FMT_DIVX6;
++            break;
++          default:
++            break;
++        }
++      }
++    } else if (g_str_equal (mimetype, "video/x-flash-video")) {
++      fourcc = V4L2_PIX_FMT_S263;
++    } else if (g_str_equal (mimetype, "video/x-h265")) {
++      fourcc = V4L2_PIX_FMT_H265;
++    } else if (g_str_equal (mimetype, "video/x-vp9")) {
++      fourcc = V4L2_PIX_FMT_VP9;
++    } else if (g_str_equal (mimetype, "video/x-wmv")) {
++      fourcc = V4L2_PIX_FMT_WMV3;
++    }else if (g_str_equal (mimetype, "video/x-pn-realvideo")) {
++      gint version;
++      if (gst_structure_get_int (structure, "rmversion", &version)) {
++        switch (version) {
++          case 3:
++            fourcc = V4L2_PIX_FMT_RV30;
++            break;
++          case 4:
++            fourcc = V4L2_PIX_FMT_RV40;
++            break;
++          default:
++            break;
++        }
++      }
+     }
+   }
+ 
+@@ -2530,6 +2643,9 @@ gst_v4l2_object_probe_caps_for_format (GstV4l2Object * v4l2object,
+         pixelformat, maxw, maxh, template);
+ 
+     if (tmp) {
++      /*the width&height means the buffer size, not the display size,
++          *the buffer size is align by driver, no need to align in gstreamer. */
++#if 0
+       GValue step_range = G_VALUE_INIT;
+ 
+       g_value_init (&step_range, GST_TYPE_INT_RANGE);
+@@ -2538,9 +2654,13 @@ gst_v4l2_object_probe_caps_for_format (GstV4l2Object * v4l2object,
+ 
+       gst_value_set_int_range_step (&step_range, h, maxh, step_h);
+       gst_structure_take_value (tmp, "height", &step_range);
+-
++#else
++      gst_structure_set (tmp, "width", GST_TYPE_INT_RANGE, (gint) w,
++          (gint) maxw, "height", GST_TYPE_INT_RANGE, (gint) h, (gint) maxh,
++          NULL);
+       /* no point using the results list here, since there's only one struct */
+       gst_v4l2_object_update_and_append (v4l2object, pixelformat, ret, tmp);
++#endif
+     }
+   } else if (size.type == V4L2_FRMSIZE_TYPE_CONTINUOUS) {
+     guint32 maxw, maxh;
+@@ -3584,8 +3704,8 @@ gst_v4l2_object_acquire_format (GstV4l2Object * v4l2object, GstVideoInfo * info)
+     align.padding_top = crop.c.top;
+     align.padding_right = width - crop.c.width - crop.c.left;
+     align.padding_bottom = height - crop.c.height - crop.c.top;
+-    width = crop.c.width;
+-    height = crop.c.height;
++    //width = crop.c.width;
++    //height = crop.c.height;
+   }
+ 
+   gst_video_info_set_format (info, format, width, height);
+@@ -4154,3 +4274,435 @@ different_caps:
+     return FALSE;
+   }
+ }
++
++gboolean
++gst_v4l2_object_set_enc_format (GstV4l2Object * v4l2object, GstCaps * caps, gboolean active)
++{
++  gint fd = v4l2object->video_fd;
++  struct v4l2_format format;
++  struct v4l2_streamparm streamparm;
++  enum v4l2_field field;
++  guint32 pixelformat;
++  struct v4l2_fmtdesc *fmtdesc;
++  GstVideoInfo info;
++  GstVideoAlignment align;
++  gint width, height, fps_n, fps_d;
++  gint n_v4l_planes;
++  gint i = 0;
++  gboolean is_mplane;
++  enum v4l2_colorspace colorspace = 0;
++
++  GST_V4L2_CHECK_OPEN (v4l2object);
++  if (active)
++    GST_V4L2_CHECK_NOT_ACTIVE (v4l2object);
++
++  is_mplane = V4L2_TYPE_IS_MULTIPLANAR (v4l2object->type);
++
++  gst_video_info_init (&info);
++  gst_video_alignment_reset (&align);
++
++  if (!gst_v4l2_object_get_caps_info (v4l2object, caps, &fmtdesc, &info))
++    goto invalid_caps;
++
++  pixelformat = fmtdesc->pixelformat;
++  width = GST_VIDEO_INFO_WIDTH (&info);
++  height = GST_VIDEO_INFO_HEIGHT (&info);
++  fps_n = GST_VIDEO_INFO_FPS_N (&info);
++  fps_d = GST_VIDEO_INFO_FPS_D (&info);
++
++  /* if encoded format (GST_VIDEO_INFO_N_PLANES return 0)
++   * or if contiguous is prefered */
++  n_v4l_planes = GST_VIDEO_INFO_N_PLANES (&info);
++  /* Rick Chang
++     Our driver will check the number of planes. Can't change it.
++     if (!n_v4l_planes || !v4l2object->prefered_non_contiguous)
++  */
++  if (!n_v4l_planes || (!v4l2object->prefered_non_contiguous && !V4L2_TYPE_IS_OUTPUT(v4l2object->type)))
++    n_v4l_planes = 1;
++
++  if (GST_VIDEO_INFO_IS_INTERLACED (&info)) {
++    GST_DEBUG_OBJECT (v4l2object->element, "interlaced video");
++    /* ideally we would differentiate between types of interlaced video
++     * but there is not sufficient information in the caps..
++     */
++    field = V4L2_FIELD_INTERLACED;
++  } else {
++    GST_DEBUG_OBJECT (v4l2object->element, "progressive video");
++    field = V4L2_FIELD_NONE;
++  }
++
++  if (V4L2_TYPE_IS_OUTPUT (v4l2object->type)) {
++    /* We should set colorspace if we have it */
++    if (gst_video_colorimetry_matches (&info.colorimetry, "bt601")) {
++      colorspace = V4L2_COLORSPACE_SMPTE170M;
++    } else if (gst_video_colorimetry_matches (&info.colorimetry, "bt709")) {
++      colorspace = V4L2_COLORSPACE_REC709;
++    } else if (gst_video_colorimetry_matches (&info.colorimetry, "smpte240m")) {
++      colorspace = V4L2_COLORSPACE_SMPTE240M;
++    } else {
++      /* Try to guess colorspace according to pixelformat and size */
++      if (GST_VIDEO_INFO_IS_YUV (&info)) {
++        /* SD streams likely use SMPTE170M and HD streams REC709 */
++        if (width <= 720 && height <= 576)
++          colorspace = V4L2_COLORSPACE_SMPTE170M;
++        else
++          colorspace = V4L2_COLORSPACE_REC709;
++      } else if (GST_VIDEO_INFO_IS_RGB (&info)) {
++        colorspace = V4L2_COLORSPACE_SRGB;
++      }
++    }
++  }
++
++  GST_DEBUG_OBJECT (v4l2object->element, "Desired format %dx%d, format "
++      "%" GST_FOURCC_FORMAT " stride: %d", width, height,
++      GST_FOURCC_ARGS (pixelformat), GST_VIDEO_INFO_PLANE_STRIDE (&info, 0));
++
++  memset (&format, 0x00, sizeof (struct v4l2_format));
++  format.type = v4l2object->type;
++
++  if (is_mplane) {
++    format.type = v4l2object->type;
++    format.fmt.pix_mp.pixelformat = pixelformat;
++    format.fmt.pix_mp.width = width;
++    format.fmt.pix_mp.height = height;
++    format.fmt.pix_mp.field = field;
++    format.fmt.pix_mp.num_planes = n_v4l_planes;
++
++    /* try to ask our prefered stride but it's not a failure if not
++     * accepted */
++    for (i = 0; i < n_v4l_planes; i++) {
++      gint stride = GST_VIDEO_INFO_PLANE_STRIDE (&info, i);
++
++      if (GST_VIDEO_FORMAT_INFO_IS_TILED (info.finfo))
++        stride = GST_VIDEO_TILE_X_TILES (stride) <<
++            GST_VIDEO_FORMAT_INFO_TILE_WS (info.finfo);
++
++      format.fmt.pix_mp.plane_fmt[i].bytesperline = stride;
++    }
++
++    if (GST_VIDEO_INFO_FORMAT (&info) == GST_VIDEO_FORMAT_ENCODED)
++      format.fmt.pix_mp.plane_fmt[0].sizeimage = ENCODED_BUFFER_SIZE;
++  } else {
++    gint stride = GST_VIDEO_INFO_PLANE_STRIDE (&info, 0);
++
++    format.type = v4l2object->type;
++    format.fmt.pix.width = width;
++    format.fmt.pix.height = height;
++    format.fmt.pix.pixelformat = pixelformat;
++    format.fmt.pix.field = field;
++
++    if (GST_VIDEO_FORMAT_INFO_IS_TILED (info.finfo))
++      stride = GST_VIDEO_TILE_X_TILES (stride) <<
++          GST_VIDEO_FORMAT_INFO_TILE_WS (info.finfo);
++
++    /* try to ask our prefered stride */
++    format.fmt.pix.bytesperline = stride;
++
++    if (GST_VIDEO_INFO_FORMAT (&info) == GST_VIDEO_FORMAT_ENCODED)
++      format.fmt.pix.sizeimage = ENCODED_BUFFER_SIZE;
++  }
++
++  GST_DEBUG_OBJECT (v4l2object->element, "Desired format is %dx%d, format "
++      "%" GST_FOURCC_FORMAT ", nb planes %d", format.fmt.pix.width,
++      format.fmt.pix_mp.height,
++      GST_FOURCC_ARGS (format.fmt.pix.pixelformat),
++      is_mplane ? format.fmt.pix_mp.num_planes : 1);
++
++#ifndef GST_DISABLE_GST_DEBUG
++  if (is_mplane) {
++    for (i = 0; i < format.fmt.pix_mp.num_planes; i++)
++      GST_DEBUG_OBJECT (v4l2object->element, "  stride %d",
++          format.fmt.pix_mp.plane_fmt[i].bytesperline);
++  } else {
++    GST_DEBUG_OBJECT (v4l2object->element, "  stride %d",
++        format.fmt.pix.bytesperline);
++  }
++#endif
++
++  if (V4L2_TYPE_IS_OUTPUT (v4l2object->type)) {
++    if (is_mplane)
++      format.fmt.pix_mp.colorspace = colorspace;
++    else
++      format.fmt.pix.colorspace = colorspace;
++
++    GST_DEBUG_OBJECT (v4l2object->element, "Desired colorspace is %d",
++        colorspace);
++  }
++
++  if (v4l2_ioctl (fd, VIDIOC_S_FMT, &format) < 0)
++    goto set_fmt_failed;
++
++  GST_DEBUG_OBJECT (v4l2object->element, "Got format of %dx%d, format "
++      "%" GST_FOURCC_FORMAT ", nb planes %d, colorspace %d",
++      format.fmt.pix.width, format.fmt.pix_mp.height,
++      GST_FOURCC_ARGS (format.fmt.pix.pixelformat),
++      is_mplane ? format.fmt.pix_mp.num_planes : 1,
++      is_mplane ? format.fmt.pix_mp.colorspace : format.fmt.pix.colorspace);
++
++#ifndef GST_DISABLE_GST_DEBUG
++  if (is_mplane) {
++    for (i = 0; i < format.fmt.pix_mp.num_planes; i++)
++      GST_DEBUG_OBJECT (v4l2object->element, "  stride %d, sizeimage %d",
++          format.fmt.pix_mp.plane_fmt[i].bytesperline,
++          format.fmt.pix_mp.plane_fmt[i].sizeimage);
++  } else {
++    GST_DEBUG_OBJECT (v4l2object->element, "  stride %d, sizeimage %d",
++        format.fmt.pix.bytesperline, format.fmt.pix.sizeimage);
++  }
++#endif
++
++  if (format.fmt.pix.pixelformat != pixelformat)
++    goto invalid_pixelformat;
++
++  /* Only negotiate size with raw data.
++   * For some codecs the dimensions are *not* in the bitstream, IIRC VC1
++   * in ASF mode for example, there is also not reason for a driver to
++   * change the size. */
++  if (info.finfo->format != GST_VIDEO_FORMAT_ENCODED) {
++    /* We can crop larger images */
++    if (format.fmt.pix.width < width || format.fmt.pix.height < height)
++      goto invalid_dimensions;
++
++    /* Note, this will be adjusted if upstream has non-centered cropping. */
++    align.padding_top = 0;
++    align.padding_bottom = format.fmt.pix.height - height;
++    align.padding_left = 0;
++    align.padding_right = format.fmt.pix.width - width;
++  }
++
++  if (is_mplane && format.fmt.pix_mp.num_planes != n_v4l_planes)
++    goto invalid_planes;
++
++  if (GST_VIDEO_INFO_HAS_ALPHA (&info)) {
++    struct v4l2_control ctl = { 0, };
++    ctl.id = V4L2_CID_ALPHA_COMPONENT;
++    ctl.value = 0xff;
++
++    if (v4l2_ioctl (fd, VIDIOC_S_CTRL, &ctl) < 0)
++      GST_WARNING_OBJECT (v4l2object->element,
++          "Failed to set alpha component value");
++  }
++
++  if (V4L2_TYPE_IS_OUTPUT (v4l2object->type)) {
++    gint bitrate = 0;
++    gint gop = 0;
++    gint prepend_hdr = 0;
++    struct v4l2_control gop_ctl = { 0, };
++    struct v4l2_control bps_ctl = { 0, };
++    struct v4l2_control prepend_hdr_ctl = { 0, };
++    GstStructure *st;
++
++    st = gst_caps_get_structure (caps, 0);
++    if (gst_structure_has_field (st, "bitrate")) {
++      gst_structure_get_int(st, "bitrate", &bitrate);
++    }
++
++    if (gst_structure_has_field (st, "gop")) {
++      gst_structure_get_int(st, "gop", &gop);
++    }
++
++    if (gst_structure_has_field (st, "prepend_hdr")) {
++      gst_structure_get_int(st, "prepend_hdr", &prepend_hdr);
++    }
++
++    bps_ctl.id = V4L2_CID_MPEG_VIDEO_BITRATE;
++    bps_ctl.value = bitrate;
++    if (v4l2_ioctl (fd, VIDIOC_S_CTRL, &bps_ctl) < 0) {
++      GST_WARNING_OBJECT (v4l2object->element,
++        "Failed to set bps_ctl component value");
++    }
++
++    gop_ctl.id = V4L2_CID_MPEG_VIDEO_GOP_SIZE;
++    gop_ctl.value = gop;
++    if (v4l2_ioctl (fd, VIDIOC_S_CTRL, &gop_ctl) < 0) {
++      GST_WARNING_OBJECT (v4l2object->element,
++        "Failed to set gop_ctl component value");
++    }
++
++    prepend_hdr_ctl.id = V4L2_CID_MPEG_VIDEO_HEADER_MODE;
++    prepend_hdr_ctl.value = prepend_hdr;
++    if (v4l2_ioctl (fd, VIDIOC_S_CTRL, &prepend_hdr_ctl) < 0) {
++      GST_WARNING_OBJECT (v4l2object->element,
++        "Failed to set prepend_hdr_ctl component value");
++    }
++
++    GST_INFO_OBJECT (v4l2object->element, "bitrate = %d, gop=%d, prepend_hdr=%d",
++      bitrate, gop, prepend_hdr);
++  }
++
++  /* Is there a reason we require the caller to always specify a framerate? */
++  GST_DEBUG_OBJECT (v4l2object->element, "Desired framerate: %u/%u", fps_n,
++      fps_d);
++
++  memset (&streamparm, 0x00, sizeof (struct v4l2_streamparm));
++  streamparm.type = v4l2object->type;
++
++  /* Rick Chang
++     In encode flow, the frame rate is decided by client not driver.
++  */
++#if 0
++  if (v4l2_ioctl (fd, VIDIOC_G_PARM, &streamparm) < 0)
++    goto get_parm_failed;
++
++  GST_VIDEO_INFO_FPS_N (&info) =
++      streamparm.parm.capture.timeperframe.denominator;
++  GST_VIDEO_INFO_FPS_D (&info) = streamparm.parm.capture.timeperframe.numerator;
++
++  if (v4l2object->type == V4L2_BUF_TYPE_VIDEO_CAPTURE
++      || v4l2object->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
++    GST_DEBUG_OBJECT (v4l2object->element, "Got framerate: %u/%u",
++        streamparm.parm.capture.timeperframe.denominator,
++        streamparm.parm.capture.timeperframe.numerator);
++
++    /* We used to skip frame rate setup if the camera was already setup
++     * with the requested frame rate. This breaks some cameras though,
++     * causing them to not output data (several models of Thinkpad cameras
++     * have this problem at least).
++     * So, don't skip. */
++    GST_LOG_OBJECT (v4l2object->element, "Setting framerate to %u/%u", fps_n,
++        fps_d);
++    /* We want to change the frame rate, so check whether we can. Some cheap USB
++     * cameras don't have the capability */
++    if ((streamparm.parm.capture.capability & V4L2_CAP_TIMEPERFRAME) == 0) {
++      GST_DEBUG_OBJECT (v4l2object->element,
++          "Not setting framerate (not supported)");
++      goto done;
++    }
++#endif
++    if (V4L2_TYPE_IS_OUTPUT (v4l2object->type)) {
++      /* Note: V4L2 wants the frame interval, we have the frame rate */
++      streamparm.parm.capture.timeperframe.numerator = fps_d;
++      streamparm.parm.capture.timeperframe.denominator = fps_n;
++
++      /* some cheap USB cam's won't accept any change */
++      if (v4l2_ioctl (fd, VIDIOC_S_PARM, &streamparm) < 0)
++        goto set_parm_failed;
++
++      /* get new values */
++      fps_d = streamparm.parm.capture.timeperframe.numerator;
++      fps_n = streamparm.parm.capture.timeperframe.denominator;
++
++      GST_INFO_OBJECT (v4l2object->element, "Set framerate to %u/%u", fps_n,
++          fps_d);
++
++      GST_VIDEO_INFO_FPS_N (&info) = fps_n;
++      GST_VIDEO_INFO_FPS_D (&info) = fps_d;
++    }
++#if 0
++  }
++#endif
++
++done:
++  if (!active)
++    return TRUE;
++
++  /* add boolean return, so we can fail on drivers bugs */
++  gst_v4l2_object_save_format (v4l2object, fmtdesc, &format, &info, &align);
++
++  /* now configure the pool */
++  if (!gst_v4l2_object_setup_pool (v4l2object, caps))
++    goto pool_failed;
++
++  return TRUE;
++
++  /* ERRORS */
++invalid_caps:
++  {
++    GST_DEBUG_OBJECT (v4l2object->element, "can't parse caps %" GST_PTR_FORMAT,
++        caps);
++    return FALSE;
++  }
++set_fmt_failed:
++  {
++    if (errno == EBUSY) {
++      GST_ELEMENT_ERROR (v4l2object->element, RESOURCE, BUSY,
++          (_("Device '%s' is busy"), v4l2object->videodev),
++          ("Call to S_FMT failed for %" GST_FOURCC_FORMAT " @ %dx%d: %s",
++              GST_FOURCC_ARGS (pixelformat), width, height,
++              g_strerror (errno)));
++    } else {
++      GST_ELEMENT_ERROR (v4l2object->element, RESOURCE, SETTINGS,
++          (_("Device '%s' cannot capture at %dx%d"),
++              v4l2object->videodev, width, height),
++          ("Call to S_FMT failed for %" GST_FOURCC_FORMAT " @ %dx%d: %s",
++              GST_FOURCC_ARGS (pixelformat), width, height,
++              g_strerror (errno)));
++    }
++    return FALSE;
++  }
++invalid_dimensions:
++  {
++    GST_ELEMENT_ERROR (v4l2object->element, RESOURCE, SETTINGS,
++        (_("Device '%s' cannot capture at %dx%d"),
++            v4l2object->videodev, width, height),
++        ("Tried to capture at %dx%d, but device returned size %dx%d",
++            width, height, format.fmt.pix.width, format.fmt.pix.height));
++    return FALSE;
++  }
++invalid_pixelformat:
++  {
++    GST_ELEMENT_ERROR (v4l2object->element, RESOURCE, SETTINGS,
++        (_("Device '%s' cannot capture in the specified format"),
++            v4l2object->videodev),
++        ("Tried to capture in %" GST_FOURCC_FORMAT
++            ", but device returned format" " %" GST_FOURCC_FORMAT,
++            GST_FOURCC_ARGS (pixelformat),
++            GST_FOURCC_ARGS (format.fmt.pix.pixelformat)));
++    return FALSE;
++  }
++invalid_planes:
++  {
++    GST_ELEMENT_ERROR (v4l2object->element, RESOURCE, SETTINGS,
++        (_("Device '%s' does support non-contiguous planes"),
++            v4l2object->videodev),
++        ("Device wants %d planes", format.fmt.pix_mp.num_planes));
++    return FALSE;
++  }
++get_parm_failed:
++  {
++    /* it's possible that this call is not supported */
++    if (errno != EINVAL && errno != ENOTTY) {
++      GST_ELEMENT_WARNING (v4l2object->element, RESOURCE, SETTINGS,
++          (_("Could not get parameters on device '%s'"),
++              v4l2object->videodev), GST_ERROR_SYSTEM);
++    }
++    goto done;
++  }
++set_parm_failed:
++  {
++    GST_ELEMENT_WARNING (v4l2object->element, RESOURCE, SETTINGS,
++        (_("Video device did not accept new frame rate setting.")),
++        GST_ERROR_SYSTEM);
++    goto done;
++  }
++pool_failed:
++  {
++    /* setup_pool already send the error */
++    return FALSE;
++  }
++}
++
++gboolean
++gst_v4l2_object_get_crop (GstV4l2Object * obj, guint *crop_width, guint *crop_height)
++{
++  struct v4l2_crop crop = { 0 };
++
++  if ((crop_width == NULL) || (crop_height == NULL))
++    return FALSE;
++
++  crop.type = obj->type;
++
++  if (v4l2_ioctl (obj->video_fd, VIDIOC_G_CROP, &crop) < 0) {
++    GST_WARNING_OBJECT (obj->element, "VIDIOC_G_CROP failed");
++    return FALSE;
++  }
++  *crop_width = crop.c.width;
++  *crop_height = crop.c.height;
++
++  GST_INFO_OBJECT (obj->element,
++      "Got cropping left %u, top %u, size %ux%u", crop.c.left, crop.c.top,
++      crop.c.width, crop.c.height);
++
++  return TRUE;
++}
++
+diff --git a/sys/v4l2/gstv4l2object.h b/sys/v4l2/gstv4l2object.h
+old mode 100644
+new mode 100755
+index 7117d43..8d814fb
+--- a/sys/v4l2/gstv4l2object.h
++++ b/sys/v4l2/gstv4l2object.h
+@@ -271,6 +271,11 @@ gboolean      gst_v4l2_object_acquire_format (GstV4l2Object * v4l2object,
+ 
+ gboolean      gst_v4l2_object_set_crop    (GstV4l2Object * obj);
+ 
++gboolean      gst_v4l2_object_get_crop (GstV4l2Object * obj, guint *crop_width, guint *crop_height);
++
++gboolean      gst_v4l2_object_set_enc_format  (GstV4l2Object * v4l2object, GstCaps * caps, gboolean active);
++
++
+ gboolean      gst_v4l2_object_decide_allocation (GstV4l2Object * v4l2object,
+                                                  GstQuery * query);
+ 
+diff --git a/sys/v4l2/gstv4l2src.c b/sys/v4l2/gstv4l2src.c
+old mode 100644
+new mode 100755
+index a6d34b1..7b06554
+--- a/sys/v4l2/gstv4l2src.c
++++ b/sys/v4l2/gstv4l2src.c
+@@ -62,7 +62,7 @@
+ GST_DEBUG_CATEGORY (v4l2src_debug);
+ #define GST_CAT_DEFAULT v4l2src_debug
+ 
+-#define DEFAULT_PROP_DEVICE   "/dev/video0"
++#define DEFAULT_PROP_DEVICE   "/dev/video5"
+ 
+ enum
+ {
+diff --git a/sys/v4l2/gstv4l2videodec.c b/sys/v4l2/gstv4l2videodec.c
+old mode 100644
+new mode 100755
+index 8ca5e38..9992cc4
+--- a/sys/v4l2/gstv4l2videodec.c
++++ b/sys/v4l2/gstv4l2videodec.c
+@@ -35,9 +35,20 @@
+ #include <string.h>
+ #include <gst/gst-i18n-plugin.h>
+ 
++#include <sys/poll.h>
++#include <poll.h>
+ GST_DEBUG_CATEGORY_STATIC (gst_v4l2_video_dec_debug);
+ #define GST_CAT_DEFAULT gst_v4l2_video_dec_debug
+ 
++#define FPS_COUNT_NUM  120
++
++static gint fps_count = 0;
++static gint64 time_start = 0;
++static gint64 time_end = 0;
++
++static gint64 time_pre_frame = 0;
++static guint32 video_count = 0;
++
+ static gboolean gst_v4l2_video_dec_flush (GstVideoDecoder * decoder);
+ 
+ typedef struct
+@@ -113,6 +124,9 @@ static gboolean
+ gst_v4l2_video_dec_open (GstVideoDecoder * decoder)
+ {
+   GstV4l2VideoDec *self = GST_V4L2_VIDEO_DEC (decoder);
++  GstCaps *src_caps, *caps;
++  GstElementClass *element_class = GST_ELEMENT_GET_CLASS (decoder);
++  GstPadTemplate *pad_template;
+ 
+   GST_DEBUG_OBJECT (self, "Opening");
+ 
+@@ -128,8 +142,15 @@ gst_v4l2_video_dec_open (GstVideoDecoder * decoder)
+   if (gst_caps_is_empty (self->probed_sinkcaps))
+     goto no_encoded_format;
+ 
+-  self->probed_srccaps = gst_v4l2_object_get_caps (self->v4l2capture,
++  src_caps = gst_v4l2_object_get_caps (self->v4l2capture,
+       gst_v4l2_object_get_raw_caps ());
++  pad_template = gst_element_class_get_pad_template (element_class, "src");
++  caps = gst_pad_template_get_caps (pad_template);
++  self->probed_srccaps = gst_caps_intersect_full (src_caps, caps, GST_CAPS_INTERSECT_FIRST);
++  gst_caps_unref (src_caps);
++  gst_caps_unref (caps);
++
++  GST_INFO_OBJECT (self, "probed src caps: %" GST_PTR_FORMAT, self->probed_srccaps);
+ 
+   if (gst_caps_is_empty (self->probed_srccaps))
+     goto no_raw_format;
+@@ -271,6 +292,7 @@ gst_v4l2_video_dec_flush (GstVideoDecoder * decoder)
+ 
+     gst_v4l2_object_unlock (self->v4l2output);
+     gst_v4l2_object_unlock (self->v4l2capture);
++    g_atomic_int_set (&self->processing, FALSE);
+     gst_pad_stop_task (decoder->srcpad);
+     GST_VIDEO_DECODER_STREAM_LOCK (decoder);
+   }
+@@ -408,6 +430,103 @@ gst_v4l2_video_dec_get_oldest_frame (GstVideoDecoder * decoder)
+   return frame;
+ }
+ 
++int gst_v4l2_sub_event(GstV4l2Object * v4l2object)
++{
++  int r = 0;;
++  struct v4l2_event_subscription sub = { 0 };
++
++  sub.type = V4L2_EVENT_SOURCE_CHANGE;
++  r = v4l2_ioctl(v4l2object->video_fd, VIDIOC_SUBSCRIBE_EVENT, &sub);
++
++  return 0;
++}
++
++static gboolean gst_v4l2_check_res_change(GstV4l2Object * v4l2object)
++{
++  struct v4l2_event e = { 0 };
++  int r;
++  __u32 change;
++
++  GST_LOG("ENTER gst_v4l2_check_res_change");
++  r = v4l2_ioctl(v4l2object->video_fd, VIDIOC_DQEVENT, &e);
++
++  GST_LOG("e.type=%d",e.type);
++  if (e.type != V4L2_EVENT_SOURCE_CHANGE)
++    goto end;
++
++  change = e.u.src_change.changes;
++  if (change & V4L2_EVENT_SRC_CH_RESOLUTION) {
++    GST_INFO("Got resolution change,change=%d",change);
++    return TRUE;
++  }
++end:
++  return FALSE;
++}
++
++static void
++gst_v4l2_update_caps (GstVideoDecoder * decoder, guint width, guint height, guint crop_width, guint crop_height)
++{
++  GstCaps *prevcaps = NULL;
++  GstCaps *updatecaps = NULL;
++  GstStructure *s = NULL;
++
++  prevcaps = gst_pad_get_current_caps (decoder->srcpad);
++
++  if (prevcaps) {
++    gboolean ret = TRUE;
++    gboolean res_changed = FALSE;
++    gint disp_width = 0;
++    gint disp_height = 0;
++    gint pre_width = 0;
++    gint pre_height = 0;
++
++    s = gst_caps_get_structure (prevcaps, 0);
++    if (s && gst_structure_has_field (s, "display_width"))
++      gst_structure_get_int (s, "display_width", &disp_width);
++
++    if (s && gst_structure_has_field (s, "display_height"))
++      gst_structure_get_int (s, "display_height", &disp_height);
++
++    if (s && gst_structure_has_field (s, "width"))
++      gst_structure_get_int (s, "width", &pre_width);
++
++    if (s && gst_structure_has_field (s, "height"))
++      gst_structure_get_int (s, "height", &pre_height);
++
++    GST_INFO("display_width=%d,display_height=%d,crop.width=%d,crop.height=%d,prewidth=%d,preheight=%d,width=%d,height=%d", 
++      disp_width, disp_height, crop_width, crop_height, pre_width, pre_height, width, height);
++
++    updatecaps = gst_caps_copy_nth (prevcaps, 0);
++
++    if ((crop_width != disp_width) || (crop_height != disp_height)) {
++      res_changed = TRUE;
++      gst_caps_set_simple (updatecaps, "display_width", G_TYPE_INT, crop_width, NULL);
++      gst_caps_set_simple (updatecaps, "display_height", G_TYPE_INT, crop_height, NULL);
++    }
++
++    if ((pre_width != width) || (pre_height != height)) {
++      res_changed = TRUE;
++      gst_caps_set_simple (updatecaps, "width", G_TYPE_INT, width, NULL);
++      gst_caps_set_simple (updatecaps, "height", G_TYPE_INT, height, NULL);
++    }
++
++    if (res_changed == TRUE) {
++      GstVideoCodecState *state = NULL;
++      state = gst_video_decoder_get_output_state(decoder);
++      state->caps = updatecaps;
++      ret = gst_pad_set_caps (decoder->srcpad, updatecaps);
++      if (ret == FALSE){
++        GST_INFO("gst_pad_set_caps FAILED");
++      }
++    }
++
++    if (prevcaps)
++      gst_caps_unref (prevcaps);
++    if (updatecaps)
++      gst_caps_unref (updatecaps);
++  }
++  return;
++}
+ static void
+ gst_v4l2_video_dec_loop (GstVideoDecoder * decoder)
+ {
+@@ -417,6 +536,10 @@ gst_v4l2_video_dec_loop (GstVideoDecoder * decoder)
+   GstVideoCodecFrame *frame;
+   GstBuffer *buffer = NULL;
+   GstFlowReturn ret;
++  struct pollfd pfd;
++  short wait_event = V4L2_TYPE_IS_OUTPUT(self->v4l2capture->type) ? POLLOUT : POLLIN;
++  int r = 0;
++  gboolean res_changed = FALSE;
+ 
+   GST_LOG_OBJECT (decoder, "Allocate output buffer");
+ 
+@@ -425,6 +548,53 @@ gst_v4l2_video_dec_loop (GstVideoDecoder * decoder)
+      * stream lock. we know that the acquire may need to poll until more frames
+      * comes in and holding this lock would prevent that.
+      */
++    pfd.fd = self->v4l2capture->video_fd;
++    pfd.events = POLLERR;
++    pfd.events |= wait_event;
++
++    if (!V4L2_TYPE_IS_OUTPUT(self->v4l2capture->type))
++      pfd.events |= POLLPRI;
++
++    GST_LOG ("before poll");
++    r = poll(&pfd, 1, 0);
++    GST_LOG ("after poll,pfd.revents=%d",pfd.revents);
++
++    if (pfd.revents & POLLPRI) 
++      res_changed = gst_v4l2_check_res_change(self->v4l2capture);
++
++    if (res_changed == TRUE) {
++      GstVideoInfo info;
++      guint crop_width = 0;
++      guint crop_height = 0;
++
++      if (self->v4l2capture->pool) {
++        GST_INFO_OBJECT (decoder, "deactivating pool");
++        gst_buffer_pool_set_active (self->v4l2capture->pool, FALSE);
++      }
++
++      if (!gst_v4l2_object_acquire_format (self->v4l2capture, &info)) {
++        GST_INFO_OBJECT (decoder, "gst_v4l2_object_acquire_format failed");
++        goto beach;
++      }
++
++      if (TRUE == gst_v4l2_object_get_crop(self->v4l2capture, &crop_width, &crop_height)) {
++        gst_v4l2_update_caps(decoder, info.width, info.height, crop_width, crop_height);
++      }
++      else {
++        GST_WARNING_OBJECT (decoder, "gst_v4l2_object_get_crop failed");
++        goto beach;
++      }
++
++      if (!gst_video_decoder_negotiate (decoder)) {
++        GST_ERROR_OBJECT (decoder, "negotiate error");
++        goto beach;
++      }
++
++      if (self->v4l2capture->pool) {
++        GST_INFO_OBJECT (decoder, "activating pool");
++        gst_buffer_pool_set_active (GST_BUFFER_POOL (self->v4l2capture->pool), TRUE);
++      }
++    }
+     pool = gst_video_decoder_get_buffer_pool (decoder);
+ 
+     /* Pool may be NULL if we started going to READY state */
+@@ -451,9 +621,34 @@ gst_v4l2_video_dec_loop (GstVideoDecoder * decoder)
+ 
+   if (frame) {
+     frame->output_buffer = buffer;
++    if (GST_BUFFER_TIMESTAMP (buffer) != 0 && GST_BUFFER_TIMESTAMP (buffer) != (((GstClockTime)-1) - 999)) {
++      frame->pts = GST_BUFFER_TIMESTAMP (buffer);
++    }
+     buffer = NULL;
+     ret = gst_video_decoder_finish_frame (decoder, frame);
+ 
++    gint64 fps_time = 0;
++    gfloat fps = 0;
++
++    if (fps_count == 0) {
++      time_start = g_get_monotonic_time();
++    }
++
++    fps_count++;
++    if (fps_count == FPS_COUNT_NUM) {
++      time_end = g_get_monotonic_time();
++      fps_time = time_end - time_start;
++      fps = FPS_COUNT_NUM * 1000000.0 / fps_time;
++      GST_INFO_OBJECT (decoder, "fps = %f", fps);
++      fps_count = 0;
++    }
++
++    video_count++;
++    gint64 time_cur = g_get_monotonic_time();
++    GST_DEBUG_OBJECT (decoder, "[%d] frame time %lld us \n", 
++        video_count, (time_cur - time_pre_frame));
++    time_pre_frame = time_cur;
++
+     if (ret != GST_FLOW_OK)
+       goto beach;
+   } else {
+@@ -515,6 +710,7 @@ gst_v4l2_video_remove_padding(GstCapsFeatures * features,
+   return TRUE;
+ }
+ 
++gboolean polling_flag = FALSE;
+ static GstFlowReturn
+ gst_v4l2_video_dec_handle_frame (GstVideoDecoder * decoder,
+     GstVideoCodecFrame * frame)
+@@ -524,6 +720,9 @@ gst_v4l2_video_dec_handle_frame (GstVideoDecoder * decoder,
+   GstFlowReturn ret = GST_FLOW_OK;
+   gboolean processed = FALSE;
+   GstBuffer *tmp;
++  GstElementClass *element_class = GST_ELEMENT_GET_CLASS (decoder);
++  GstPadTemplate *pad_template;
++  int r = 0;
+ 
+   GST_DEBUG_OBJECT (self, "Handling frame %d", frame->system_frame_number);
+ 
+@@ -541,7 +740,9 @@ gst_v4l2_video_dec_handle_frame (GstVideoDecoder * decoder,
+   if (G_UNLIKELY (!GST_V4L2_IS_ACTIVE (self->v4l2capture))) {
+     GstBufferPool *pool = GST_BUFFER_POOL (self->v4l2output->pool);
+     GstVideoInfo info;
++    GstVideoInfo input_info;
+     GstVideoCodecState *output_state;
++    GstVideoCodecState *input_state;
+     GstBuffer *codec_data;
+     GstCaps *acquired_caps, *available_caps, *caps, *filter;
+     GstStructure *st;
+@@ -592,9 +793,10 @@ gst_v4l2_video_dec_handle_frame (GstVideoDecoder * decoder,
+ 
+     /* Create caps from the acquired format, remove the format field */
+     acquired_caps = gst_video_info_to_caps (&info);
++    if (self->v4l2capture->format.fmt.pix.pixelformat == V4L2_PIX_FMT_MT21) {
+     st = gst_caps_get_structure (acquired_caps, 0);
+     gst_structure_remove_field (st, "format");
+-
++    }
+     /* Probe currently available pixel formats */
+     available_caps = gst_v4l2_object_probe_caps (self->v4l2capture, NULL);
+     available_caps = gst_caps_make_writable (available_caps);
+@@ -633,6 +835,22 @@ gst_v4l2_video_dec_handle_frame (GstVideoDecoder * decoder,
+ 
+     /* Copy the rest of the information, there might be more in the future */
+     output_state->info.interlace_mode = info.interlace_mode;
++
++    input_state = self->input_state;
++    if (!input_state) {
++        GST_ERROR_OBJECT (self, "input_state is null");
++    } else {
++        gst_video_info_from_caps(&input_info, input_state->caps);
++        GST_DEBUG_OBJECT (self, "input_info.width=%d input_info.height=%d", input_info.width, input_info.height);
++    }
++
++    if (output_state->caps == NULL) {
++        output_state->caps = gst_video_info_to_caps (&output_state->info);
++    }
++
++    gst_caps_set_simple (output_state->caps, "display_width", G_TYPE_INT, input_info.width, NULL);
++    gst_caps_set_simple (output_state->caps, "display_height", G_TYPE_INT, input_info.height, NULL);
++
+     gst_video_codec_state_unref (output_state);
+ 
+     if (!gst_video_decoder_negotiate (decoder)) {
+@@ -662,6 +880,7 @@ gst_v4l2_video_dec_handle_frame (GstVideoDecoder * decoder,
+     /* Start the processing task, when it quits, the task will disable input
+      * processing to unlock input if draining, or prevent potential block */
+     g_atomic_int_set (&self->processing, TRUE);
++    r = gst_v4l2_sub_event(self->v4l2capture);
+     if (!gst_pad_start_task (decoder->srcpad,
+             (GstTaskFunction) gst_v4l2_video_dec_loop, self,
+             (GDestroyNotify) gst_v4l2_video_dec_loop_stopped))
+@@ -886,6 +1105,8 @@ static void
+ gst_v4l2_video_dec_init (GstV4l2VideoDec * self)
+ {
+   /* V4L2 object are created in subinstance_init */
++  gst_video_decoder_set_use_default_pad_acceptcaps (GST_VIDEO_DECODER_CAST
++      (self), TRUE);
+ }
+ 
+ static void
+diff --git a/sys/v4l2/gstv4l2videoenc.c b/sys/v4l2/gstv4l2videoenc.c
+new file mode 100755
+index 0000000..e8bb146
+--- /dev/null
++++ b/sys/v4l2/gstv4l2videoenc.c
+@@ -0,0 +1,958 @@
++/*
++ * Copyright (C) 2014 ayaka <ayaka@soulik.info>
++ * Copyright (C) 2016 Rick Chang <rick.chang@mediatek.com>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Library General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Library General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
++ * Boston, MA 02110-1301, USA.
++ *
++ */
++
++#ifdef HAVE_CONFIG_H
++#include "config.h"
++#endif
++
++#include <sys/stat.h>
++#include <fcntl.h>
++#include <errno.h>
++#include <unistd.h>
++#include <string.h>
++
++#include "gstv4l2videoenc.h"
++#include "v4l2_calls.h"
++
++#include <string.h>
++#include <gst/gst-i18n-plugin.h>
++
++#define DEFAULT_PROP_DEVICE "/dev/video1"
++
++GST_DEBUG_CATEGORY_STATIC (gst_v4l2_video_enc_debug);
++#define GST_CAT_DEFAULT gst_v4l2_video_enc_debug
++
++#define MAX_CODEC_FRAME (2 * 1024 * 1024)
++
++static gboolean gst_v4l2_video_enc_flush (GstVideoEncoder * encoder);
++
++enum
++{
++  PROP_0,
++  V4L2_STD_OBJECT_PROPS,
++  PROP_BITRATE,
++  PROP_GOP,
++  PROP_PREPEND_HDR,
++};
++
++#define gst_v4l2_video_enc_parent_class parent_class
++G_DEFINE_ABSTRACT_TYPE (GstV4l2VideoEnc, gst_v4l2_video_enc,
++    GST_TYPE_VIDEO_ENCODER);
++
++void
++gst_v4l2_video_enc_set_property (GObject * object,
++    guint prop_id, const GValue * value, GParamSpec * pspec)
++{
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (object);
++
++  switch (prop_id) {
++      /* Split IO mode so output is configure through 'io-mode' and capture
++       * through 'capture-io-mode' */
++    case PROP_IO_MODE:
++      gst_v4l2_object_set_property_helper (self->v4l2output,
++          PROP_IO_MODE, value, pspec);
++      break;
++    case PROP_CAPTURE_IO_MODE:
++      gst_v4l2_object_set_property_helper (self->v4l2capture,
++          prop_id, value, pspec);
++      break;
++
++    case PROP_DEVICE:
++      gst_v4l2_object_set_property_helper (self->v4l2output,
++          prop_id, value, pspec);
++      gst_v4l2_object_set_property_helper (self->v4l2capture,
++          prop_id, value, pspec);
++      break;
++    case PROP_BITRATE:
++      self->bitrate = g_value_get_int (value);
++      break;
++    case PROP_GOP:
++      self->gop = g_value_get_int (value);
++    break;
++    case PROP_PREPEND_HDR:
++      self->prepend_hdr = g_value_get_int (value);
++      break;
++
++      /* By default, only set on output */
++    default:
++      if (!gst_v4l2_object_set_property_helper (self->v4l2output,
++              prop_id, value, pspec)) {
++        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
++      }
++      break;
++  }
++}
++
++void
++gst_v4l2_video_enc_get_property (GObject * object,
++    guint prop_id, GValue * value, GParamSpec * pspec)
++{
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (object);
++
++  switch (prop_id) {
++    case PROP_IO_MODE:
++      gst_v4l2_object_get_property_helper (self->v4l2output, prop_id, value,
++          pspec);
++      break;
++    case PROP_CAPTURE_IO_MODE:
++      gst_v4l2_object_get_property_helper (self->v4l2output, PROP_IO_MODE,
++          value, pspec);
++      break;
++    case PROP_BITRATE:
++      g_value_set_int (value, self->bitrate);
++      break;
++    case PROP_GOP:
++      g_value_set_int (value, self->gop);
++      break;
++    case PROP_PREPEND_HDR:
++      g_value_set_int (value, self->prepend_hdr);
++      break;
++
++      /* By default read from output */
++    default:
++      if (!gst_v4l2_object_get_property_helper (self->v4l2output,
++              prop_id, value, pspec)) {
++        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
++      }
++      break;
++  }
++}
++
++static gboolean
++gst_v4l2_video_enc_open (GstVideoEncoder * encoder)
++{
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (encoder);
++
++  GST_DEBUG_OBJECT (self, "Opening");
++
++  if (!gst_v4l2_object_open (self->v4l2output))
++    goto failure;
++
++  if (!gst_v4l2_object_open_shared (self->v4l2capture, self->v4l2output))
++    goto failure;
++
++  self->probed_sinkcaps = gst_v4l2_object_get_caps (self->v4l2output,
++      gst_v4l2_object_get_raw_caps ());
++
++  if (gst_caps_is_empty (self->probed_sinkcaps))
++    goto no_raw_format;
++
++  self->probed_srccaps = gst_v4l2_object_get_caps (self->v4l2capture,
++      gst_v4l2_object_get_codec_caps ());
++
++  if (gst_caps_is_empty (self->probed_srccaps))
++    goto no_encoded_format;
++
++  return TRUE;
++
++no_encoded_format:
++  GST_ELEMENT_ERROR (self, RESOURCE, SETTINGS,
++      (_("Encoder on device %s has no supported output format"),
++          self->v4l2output->videodev), (NULL));
++  goto failure;
++
++
++no_raw_format:
++  GST_ELEMENT_ERROR (self, RESOURCE, SETTINGS,
++      (_("Encoder on device %s has no supported input format"),
++          self->v4l2output->videodev), (NULL));
++  goto failure;
++
++failure:
++  if (GST_V4L2_IS_OPEN (self->v4l2output))
++    gst_v4l2_object_close (self->v4l2output);
++
++  if (GST_V4L2_IS_OPEN (self->v4l2capture))
++    gst_v4l2_object_close (self->v4l2capture);
++
++  gst_caps_replace (&self->probed_srccaps, NULL);
++  gst_caps_replace (&self->probed_sinkcaps, NULL);
++
++  return FALSE;
++}
++
++static gboolean
++gst_v4l2_video_enc_close (GstVideoEncoder * encoder)
++{
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (encoder);
++
++  GST_DEBUG_OBJECT (self, "Closing");
++
++  gst_v4l2_object_close (self->v4l2output);
++  gst_v4l2_object_close (self->v4l2capture);
++  gst_caps_replace (&self->probed_srccaps, NULL);
++  gst_caps_replace (&self->probed_sinkcaps, NULL);
++
++  return TRUE;
++}
++
++static gboolean
++gst_v4l2_video_enc_start (GstVideoEncoder * encoder)
++{
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (encoder);
++
++  GST_DEBUG_OBJECT (self, "Starting");
++
++  g_atomic_int_set(&self->finish, FALSE);
++  gst_v4l2_object_unlock (self->v4l2output);
++  g_atomic_int_set (&self->active, TRUE);
++  self->output_flow = GST_FLOW_OK;
++
++  return TRUE;
++}
++
++static gboolean
++gst_v4l2_video_enc_stop (GstVideoEncoder * encoder)
++{
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (encoder);
++
++  GST_DEBUG_OBJECT (self, "Stopping");
++
++  gst_v4l2_object_unlock (self->v4l2output);
++  gst_v4l2_object_unlock (self->v4l2capture);
++
++  /* Wait for capture thread to stop */
++  gst_pad_stop_task (encoder->srcpad);
++
++  GST_VIDEO_ENCODER_STREAM_LOCK (encoder);
++  self->output_flow = GST_FLOW_OK;
++  GST_VIDEO_ENCODER_STREAM_UNLOCK (encoder);
++
++  /* Should have been flushed already */
++  g_assert (g_atomic_int_get (&self->active) == FALSE);
++  g_assert (g_atomic_int_get (&self->processing) == FALSE);
++
++  gst_v4l2_object_stop (self->v4l2output);
++  gst_v4l2_object_stop (self->v4l2capture);
++
++  if (self->input_state) {
++    gst_video_codec_state_unref (self->input_state);
++    self->input_state = NULL;
++  }
++
++  GST_DEBUG_OBJECT (self, "Stopped");
++
++  return TRUE;
++}
++
++static gboolean
++gst_v4l2_video_enc_set_format (GstVideoEncoder * encoder,
++    GstVideoCodecState * state)
++{
++  gboolean ret = TRUE;
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (encoder);
++
++  GST_DEBUG_OBJECT (self, "Setting format: %" GST_PTR_FORMAT, state->caps);
++
++  if (self->input_state) {
++    if (gst_v4l2_object_caps_equal (self->v4l2output, state->caps)) {
++      GST_DEBUG_OBJECT (self, "Compatible caps");
++      goto done;
++    }
++    gst_video_codec_state_unref (self->input_state);
++    self->input_state = NULL;
++
++    /* FIXME we probably need to do more work if pools are active */
++  }
++
++  state->caps = gst_caps_make_writable (state->caps);
++  gst_caps_set_simple (state->caps, "bitrate", G_TYPE_INT, self->bitrate, NULL);
++  gst_caps_set_simple (state->caps, "gop", G_TYPE_INT, self->gop, NULL);
++  gst_caps_set_simple (state->caps, "prepend_hdr", G_TYPE_INT, self->prepend_hdr, NULL);
++
++  ret = gst_v4l2_object_set_enc_format (self->v4l2output, state->caps, FALSE);
++
++  if (ret)
++    self->input_state = gst_video_codec_state_ref (state);
++
++  GST_DEBUG_OBJECT (self, "output caps: %" GST_PTR_FORMAT, state->caps);
++
++done:
++  return ret;
++}
++
++static gboolean
++gst_v4l2_video_enc_flush (GstVideoEncoder * encoder)
++{
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (encoder);
++
++  GST_DEBUG_OBJECT (self, "Flushing");
++
++  /* Ensure the processing thread has stopped for the reverse playback
++   * iscount case */
++  if (g_atomic_int_get (&self->processing)) {
++    GST_VIDEO_ENCODER_STREAM_UNLOCK (encoder);
++
++    gst_v4l2_object_unlock_stop (self->v4l2output);
++    gst_v4l2_object_unlock_stop (self->v4l2capture);
++    gst_pad_stop_task (encoder->srcpad);
++
++    GST_VIDEO_ENCODER_STREAM_UNLOCK (encoder);
++
++  }
++
++  self->output_flow = GST_FLOW_OK;
++
++  gst_v4l2_object_unlock_stop (self->v4l2output);
++  gst_v4l2_object_unlock_stop (self->v4l2capture);
++
++  return TRUE;
++}
++
++static gboolean
++gst_v4l2_video_enc_negotiate (GstVideoEncoder * encoder)
++{
++  return GST_VIDEO_ENCODER_CLASS (parent_class)->negotiate (encoder);
++}
++
++static GstFlowReturn
++gst_v4l2_video_enc_finish (GstVideoEncoder * encoder)
++{
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (encoder);
++  GstFlowReturn ret = GST_FLOW_OK;
++  GstBuffer *buffer;
++  gint i;
++
++  if (!g_atomic_int_get (&self->processing))
++    goto done;
++
++  GST_DEBUG_OBJECT (self, "Finishing encoding");
++
++  /* Keep queuing empty buffers until the processing thread has stopped,
++   * _pool_process() will return FLUSHING when that happened */
++  GST_VIDEO_ENCODER_STREAM_UNLOCK (encoder);
++  /*
++  while (ret == GST_FLOW_OK) {
++    buffer = gst_buffer_new ();
++    ret =
++        gst_v4l2_buffer_pool_process (GST_V4L2_BUFFER_POOL
++        (self->v4l2output->pool), &buffer);
++    gst_buffer_unref (buffer);
++  }
++  */
++  g_atomic_int_set(&self->finish, TRUE);
++  for (i = 0; g_atomic_int_get (&self->processing) && i < 100; i++)
++    g_usleep(1000);
++  GST_INFO ("Close task. (%d)",i);
++
++  /* and ensure the processing thread has stopped in case another error
++   * occured. */
++  gst_v4l2_object_unlock (self->v4l2capture);
++  gst_pad_stop_task (encoder->srcpad);
++  GST_VIDEO_ENCODER_STREAM_LOCK (encoder);
++
++  if (ret == GST_FLOW_FLUSHING)
++    ret = self->output_flow;
++
++  GST_DEBUG_OBJECT (encoder, "Done draining buffers");
++
++done:
++  return ret;
++}
++
++static GstVideoCodecFrame *
++gst_v4l2_video_enc_get_oldest_frame (GstVideoEncoder * encoder)
++{
++  GstVideoCodecFrame *frame = NULL;
++  GList *frames, *l;
++  gint count = 0;
++
++  frames = gst_video_encoder_get_frames (encoder);
++
++  for (l = frames; l != NULL; l = l->next) {
++    GstVideoCodecFrame *f = l->data;
++
++    if (!frame || frame->pts > f->pts)
++      frame = f;
++
++    count++;
++  }
++
++  if (frame) {
++    GST_LOG_OBJECT (encoder,
++        "Oldest frame is %d %" GST_TIME_FORMAT
++        " and %d frames left",
++        frame->system_frame_number, GST_TIME_ARGS (frame->pts), count - 1);
++    gst_video_codec_frame_ref (frame);
++  }
++
++  g_list_free_full (frames, (GDestroyNotify) gst_video_codec_frame_unref);
++
++  return frame;
++}
++
++static void
++gst_v4l2_video_enc_loop (GstVideoEncoder * encoder)
++{
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (encoder);
++  GstVideoCodecFrame *frame;
++  GstBuffer *buffer = NULL;
++  GstFlowReturn ret;
++  gint i;
++
++  frame = gst_v4l2_video_enc_get_oldest_frame (encoder);
++  if (!frame) {
++    if (g_atomic_int_get (&self->finish))
++      goto beach;
++    GST_WARNING ("input too slow");
++    g_usleep(1000);
++    return;
++  }
++
++  GST_LOG_OBJECT (encoder, "Allocate output buffer");
++
++  buffer = gst_video_encoder_allocate_output_buffer (encoder, MAX_CODEC_FRAME);
++  if (NULL == buffer) {
++    ret = GST_FLOW_FLUSHING;
++    goto beach;
++  }
++
++  if (frame->system_frame_number == 0) {
++    GList *header = NULL;
++
++    GST_INFO ("send header");
++    ret =
++        gst_v4l2_buffer_pool_process (GST_V4L2_BUFFER_POOL
++        (self->v4l2capture->pool), &buffer);
++    if (ret != GST_FLOW_OK) {
++          gst_buffer_unref (buffer);
++      goto beach;
++    }
++    header = g_list_prepend (header, buffer);
++    gst_video_encoder_set_headers (encoder, header);
++    buffer = gst_video_encoder_allocate_output_buffer (encoder, MAX_CODEC_FRAME);
++    if (NULL == buffer) {
++      ret = GST_FLOW_FLUSHING;
++      goto beach;
++    }
++  }
++
++  /* FIXME Check if buffer isn't the last one here */
++
++  GST_LOG_OBJECT (encoder, "Process output buffer");
++  ret =
++      gst_v4l2_buffer_pool_process (GST_V4L2_BUFFER_POOL
++      (self->v4l2capture->pool), &buffer);
++
++  if (ret != GST_FLOW_OK)
++    goto beach;
++
++  /* if (frame) { */
++    frame->output_buffer = buffer;
++    buffer = NULL;
++    ret = gst_video_encoder_finish_frame (encoder, frame);
++
++    if (ret != GST_FLOW_OK)
++      goto beach;
++  /*
++  } else {
++    GST_WARNING_OBJECT (encoder, "Encoder is producing too many buffers");
++    gst_buffer_unref (buffer);
++  }
++  */
++  return;
++
++beach:
++  GST_DEBUG_OBJECT (encoder, "Leaving output thread");
++
++  gst_buffer_replace (&buffer, NULL);
++  self->output_flow = ret;
++  g_atomic_int_set (&self->processing, FALSE);
++  gst_v4l2_object_unlock (self->v4l2output);
++  gst_pad_pause_task (encoder->srcpad);
++}
++
++static void
++gst_v4l2_video_enc_loop_stopped (GstV4l2VideoEnc * self)
++{
++  if (g_atomic_int_get (&self->processing)) {
++    GST_DEBUG_OBJECT (self, "Early stop of encoding thread");
++    self->output_flow = GST_FLOW_FLUSHING;
++    g_atomic_int_set (&self->processing, FALSE);
++  }
++
++  GST_DEBUG_OBJECT (self, "Encoding task destroyed: %s",
++      gst_flow_get_name (self->output_flow));
++
++}
++
++static gboolean
++gst_v4l2_video_enc_set_crop (GstV4l2Object * obj)
++{
++    struct v4l2_crop crop = { 0 };
++
++    crop.type = obj->type;
++    crop.c.left = 0;
++    crop.c.top = 0;
++    crop.c.width = obj->info.width;
++    crop.c.height = obj->info.height;
++
++    GST_DEBUG_OBJECT (obj->element,
++          "Desired cropping left %u, top %u, size %ux%u", crop.c.left, crop.c.top,
++          crop.c.width, crop.c.height);
++
++    if (v4l2_ioctl (obj->video_fd, VIDIOC_S_CROP, &crop) < 0) {
++        GST_WARNING_OBJECT (obj->element, "VIDIOC_S_CROP failed");
++        return FALSE;
++    }
++
++    GST_DEBUG_OBJECT (obj->element,
++          "Got cropping left %u, top %u, size %ux%u", crop.c.left, crop.c.top,
++          crop.c.width, crop.c.height);
++
++    return TRUE;
++}
++
++static GstFlowReturn
++gst_v4l2_video_enc_handle_frame (GstVideoEncoder * encoder,
++    GstVideoCodecFrame * frame, GstCaps * outcaps)
++{
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (encoder);
++  GstFlowReturn ret = GST_FLOW_OK;
++
++  GST_DEBUG_OBJECT (self, "Handling frame %d", frame->system_frame_number);
++
++  if (G_UNLIKELY (!g_atomic_int_get (&self->active)))
++    goto flushing;
++
++  if (NULL != outcaps) {
++    GstBufferPool *pool;
++  
++    /* Set capture format first */
++    if(!gst_v4l2_object_set_enc_format (self->v4l2capture, outcaps, TRUE))
++      goto not_negotiated;
++  
++    if (G_UNLIKELY (!GST_V4L2_IS_ACTIVE (self->v4l2output))) {
++      if (!self->input_state)
++        goto not_negotiated;
++      if (!gst_v4l2_object_set_enc_format (self->v4l2output, self->input_state->caps, TRUE))
++        goto not_negotiated;
++    }
++
++    gst_v4l2_video_enc_set_crop (self->v4l2output);
++
++    pool = GST_BUFFER_POOL (self->v4l2output->pool);
++
++    if (!gst_buffer_pool_is_active (pool)) {
++      GstStructure *config = gst_buffer_pool_get_config (pool);
++      gst_buffer_pool_config_set_params (config,
++          self->input_state->caps, self->v4l2output->info.size, 2, 2);
++
++      if (!gst_buffer_pool_set_config (pool, config))
++        goto activate_failed;
++
++      if (!gst_buffer_pool_set_active (pool, TRUE))
++        goto activate_failed;
++    }
++
++    gst_video_encoder_set_output_state (encoder, outcaps, self->input_state);
++
++    if (!gst_video_encoder_negotiate (encoder)) {
++      if (GST_PAD_IS_FLUSHING (encoder->srcpad))
++        goto flushing;
++      else
++        goto not_negotiated;
++    }
++
++    if (!gst_buffer_pool_set_active
++        (GST_BUFFER_POOL (self->v4l2capture->pool), TRUE)) {
++      GST_DEBUG ("active capture pool failed");
++      goto activate_failed;
++    }
++  }
++
++  if (g_atomic_int_get (&self->processing) == FALSE) {
++    /* It possible that the processing thread stopped due to an error */
++    if (self->output_flow != GST_FLOW_OK &&
++        self->output_flow != GST_FLOW_FLUSHING) {
++      GST_DEBUG_OBJECT (self, "Processing loop stopped with error, leaving");
++      ret = self->output_flow;
++      goto drop;
++    }
++
++    GST_DEBUG_OBJECT (self, "Starting encoding thread");
++
++    /* Start the processing task, when it quits, the task will disable input
++     * processing to unlock input if draining, or prevent potential block */
++    g_atomic_int_set (&self->processing, TRUE);
++    if (!gst_pad_start_task (encoder->srcpad,
++            (GstTaskFunction) gst_v4l2_video_enc_loop, self,
++            (GDestroyNotify) gst_v4l2_video_enc_loop_stopped))
++      goto start_task_failed;
++  }
++
++  if (frame->input_buffer) {
++    GST_VIDEO_ENCODER_STREAM_UNLOCK (encoder);
++    ret =
++        gst_v4l2_buffer_pool_process (GST_V4L2_BUFFER_POOL
++        (self->v4l2output->pool), &frame->input_buffer);
++    GST_VIDEO_ENCODER_STREAM_LOCK (encoder);
++
++    if (ret == GST_FLOW_FLUSHING) {
++      if (g_atomic_int_get (&self->processing) == FALSE)
++        ret = self->output_flow;
++      goto drop;
++    } else if (ret != GST_FLOW_OK) {
++      goto process_failed;
++    }
++
++    /* No need to keep input arround */
++    gst_buffer_replace (&frame->input_buffer, NULL);
++  }
++
++  gst_video_codec_frame_unref (frame);
++  return ret;
++  /* ERRORS */
++not_negotiated:
++  {
++    GST_ERROR_OBJECT (self, "not negotiated");
++    ret = GST_FLOW_NOT_NEGOTIATED;
++    goto drop;
++  }
++activate_failed:
++  {
++    GST_ELEMENT_ERROR (self, RESOURCE, SETTINGS,
++        (_("Failed to allocate required memory.")),
++        ("Buffer pool activation failed"));
++    return GST_FLOW_ERROR;
++
++  }
++flushing:
++  {
++    ret = GST_FLOW_FLUSHING;
++    goto drop;
++  }
++start_task_failed:
++  {
++    GST_ELEMENT_ERROR (self, RESOURCE, FAILED,
++        (_("Failed to start encoding thread.")), (NULL));
++    g_atomic_int_set (&self->processing, FALSE);
++    ret = GST_FLOW_ERROR;
++    goto drop;
++  }
++process_failed:
++  {
++    GST_ELEMENT_ERROR (self, RESOURCE, FAILED,
++        (_("Failed to process frame.")),
++        ("Maybe be due to not enough memory or failing driver"));
++    ret = GST_FLOW_ERROR;
++    goto drop;
++  }
++drop:
++  {
++    gst_video_encoder_finish_frame (encoder, frame);
++    return ret;
++  }
++}
++
++static gboolean
++gst_v4l2_video_enc_decide_allocation (GstVideoEncoder *
++    encoder, GstQuery * query)
++{
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (encoder);
++  GstClockTime latency;
++  gboolean ret = FALSE;
++
++  self->v4l2capture->info.size = MAX_CODEC_FRAME;
++
++  if (gst_v4l2_object_decide_allocation (self->v4l2capture, query))
++    ret =
++        GST_VIDEO_ENCODER_CLASS
++        (parent_class)->decide_allocation (encoder, query);
++  latency = self->v4l2capture->min_buffers * self->v4l2capture->duration;
++  gst_video_encoder_set_latency (encoder, latency, latency);
++  return ret;
++}
++
++static gboolean
++gst_v4l2_video_enc_propose_allocation (GstVideoEncoder *
++    encoder, GstQuery * query)
++{
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (encoder);
++  gboolean ret = FALSE;
++
++  GST_DEBUG_OBJECT (self, "called");
++/*
++  if (query == NULL)
++    ret = TRUE;
++  else
++    ret = gst_v4l2_object_propose_allocation (self->v4l2output, query);
++*/
++  if (ret)
++    ret = GST_VIDEO_ENCODER_CLASS (parent_class)->propose_allocation (encoder,
++        query);
++
++  return ret;
++}
++
++static gboolean
++gst_v4l2_video_enc_src_query (GstVideoEncoder * encoder, GstQuery * query)
++{
++  gboolean ret = TRUE;
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (encoder);
++  switch (GST_QUERY_TYPE (query)) {
++    case GST_QUERY_CAPS:{
++      GstCaps *filter, *result = NULL;
++      GstPad *pad = GST_VIDEO_ENCODER_SRC_PAD (encoder);
++
++      gst_query_parse_caps (query, &filter);
++
++      if (self->probed_srccaps)
++        result = gst_caps_ref (self->probed_srccaps);
++      else
++        result = gst_pad_get_pad_template_caps (pad);
++
++      if (filter) {
++        GstCaps *tmp = result;
++        result =
++            gst_caps_intersect_full (filter, tmp, GST_CAPS_INTERSECT_FIRST);
++        gst_caps_unref (tmp);
++      }
++
++      GST_DEBUG_OBJECT (self, "Returning src caps %" GST_PTR_FORMAT, result);
++
++      gst_query_set_caps_result (query, result);
++      gst_caps_unref (result);
++      break;
++    }
++
++    default:
++      ret = GST_VIDEO_ENCODER_CLASS (parent_class)->src_query (encoder, query);
++      break;
++  }
++
++  return ret;
++}
++
++static gboolean
++gst_v4l2_video_enc_sink_query (GstVideoEncoder * encoder, GstQuery * query)
++{
++  gboolean ret = TRUE;
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (encoder);
++
++  switch (GST_QUERY_TYPE (query)) {
++    case GST_QUERY_CAPS:{
++      GstCaps *filter, *result = NULL;
++      GstPad *pad = GST_VIDEO_ENCODER_SINK_PAD (encoder);
++
++      gst_query_parse_caps (query, &filter);
++
++      if (self->probed_sinkcaps)
++        result = gst_caps_ref (self->probed_sinkcaps);
++      else
++        result = gst_pad_get_pad_template_caps (pad);
++
++      if (filter) {
++        GstCaps *tmp = result;
++        result =
++            gst_caps_intersect_full (filter, tmp, GST_CAPS_INTERSECT_FIRST);
++        gst_caps_unref (tmp);
++      }
++
++      GST_DEBUG_OBJECT (self, "Returning sink caps %" GST_PTR_FORMAT, result);
++
++      gst_query_set_caps_result (query, result);
++      gst_caps_unref (result);
++      break;
++    }
++
++    default:
++      ret = GST_VIDEO_ENCODER_CLASS (parent_class)->sink_query (encoder, query);
++      break;
++  }
++
++  return ret;
++}
++
++static gboolean
++gst_v4l2_video_enc_sink_event (GstVideoEncoder * encoder, GstEvent * event)
++{
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (encoder);
++  gboolean ret;
++
++  switch (GST_EVENT_TYPE (event)) {
++    case GST_EVENT_FLUSH_START:
++      GST_DEBUG_OBJECT (self, "flush start");
++      gst_v4l2_object_unlock (self->v4l2output);
++      gst_v4l2_object_unlock (self->v4l2capture);
++      break;
++    default:
++      break;
++  }
++
++  ret = GST_VIDEO_ENCODER_CLASS (parent_class)->sink_event (encoder, event);
++
++  switch (GST_EVENT_TYPE (event)) {
++    case GST_EVENT_FLUSH_START:
++      gst_pad_stop_task (encoder->srcpad);
++      GST_DEBUG_OBJECT (self, "flush start done");
++    default:
++      break;
++  }
++
++  return ret;
++}
++
++static GstStateChangeReturn
++gst_v4l2_video_enc_change_state (GstElement * element,
++    GstStateChange transition)
++{
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (element);
++  GstVideoEncoder *encoder = GST_VIDEO_ENCODER (element);
++
++  if (transition == GST_STATE_CHANGE_PAUSED_TO_READY) {
++    g_atomic_int_set (&self->active, FALSE);
++    gst_v4l2_object_unlock (self->v4l2output);
++    gst_v4l2_object_unlock (self->v4l2capture);
++    gst_pad_stop_task (encoder->srcpad);
++  }
++
++  return GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
++}
++
++static void
++gst_v4l2_video_enc_dispose (GObject * object)
++{
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (object);
++
++  gst_caps_replace (&self->probed_sinkcaps, NULL);
++  gst_caps_replace (&self->probed_srccaps, NULL);
++
++  G_OBJECT_CLASS (parent_class)->dispose (object);
++}
++
++static void
++gst_v4l2_video_enc_finalize (GObject * object)
++{
++  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (object);
++
++  gst_v4l2_object_destroy (self->v4l2capture);
++  gst_v4l2_object_destroy (self->v4l2output);
++
++  G_OBJECT_CLASS (parent_class)->finalize (object);
++}
++
++static void
++gst_v4l2_video_enc_init (GstV4l2VideoEnc * self)
++{
++  self->v4l2output = gst_v4l2_object_new (GST_ELEMENT (self),
++      V4L2_BUF_TYPE_VIDEO_OUTPUT, DEFAULT_PROP_DEVICE,
++      gst_v4l2_get_output, gst_v4l2_set_output, NULL);
++  self->v4l2output->no_initial_format = TRUE;
++  self->v4l2output->keep_aspect = FALSE;
++
++  self->v4l2capture = gst_v4l2_object_new (GST_ELEMENT (self),
++      V4L2_BUF_TYPE_VIDEO_CAPTURE, DEFAULT_PROP_DEVICE,
++      gst_v4l2_get_input, gst_v4l2_set_input, NULL);
++  self->v4l2capture->no_initial_format = TRUE;
++  self->v4l2output->keep_aspect = FALSE;
++}
++
++static void
++gst_v4l2_video_enc_class_init (GstV4l2VideoEncClass * klass)
++{
++  GstElementClass *element_class;
++  GObjectClass *gobject_class;
++  GstVideoEncoderClass *video_encoder_class;
++
++  parent_class = g_type_class_peek_parent (klass);
++
++  element_class = (GstElementClass *) klass;
++  gobject_class = (GObjectClass *) klass;
++  video_encoder_class = (GstVideoEncoderClass *) klass;
++
++  GST_DEBUG_CATEGORY_INIT (gst_v4l2_video_enc_debug, "v4l2videoenc", 0,
++      "V4L2 Video Encoder");
++
++  gst_element_class_set_static_metadata (element_class,
++      "V4L2 Video Encoder",
++      "Codec/Encoder/Video",
++      "Encode video streams via V4L2 API", "ayaka <ayaka@soulik.info>");
++  
++  gst_element_class_add_pad_template (element_class,
++      gst_pad_template_new ("sink", GST_PAD_SINK, GST_PAD_ALWAYS,
++          gst_v4l2_object_get_raw_caps ()));
++  gst_element_class_add_pad_template (element_class,
++      gst_pad_template_new ("src", GST_PAD_SRC, GST_PAD_ALWAYS,
++          gst_v4l2_object_get_codec_caps ()));
++  
++  gobject_class->dispose = GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_dispose);
++  gobject_class->finalize = GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_finalize);
++  gobject_class->set_property =
++      GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_set_property);
++  gobject_class->get_property =
++      GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_get_property);
++
++  video_encoder_class->open = GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_open);
++  video_encoder_class->close = GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_close);
++  video_encoder_class->start = GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_start);
++  video_encoder_class->stop = GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_stop);
++  video_encoder_class->finish = GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_finish);
++  video_encoder_class->flush = GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_flush);
++  video_encoder_class->set_format =
++      GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_set_format);
++  video_encoder_class->negotiate =
++      GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_negotiate);
++  video_encoder_class->decide_allocation =
++      GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_decide_allocation);
++  video_encoder_class->propose_allocation =
++       GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_propose_allocation);
++  video_encoder_class->sink_query =
++      GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_sink_query);
++  video_encoder_class->src_query =
++      GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_src_query);
++  video_encoder_class->sink_event =
++      GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_sink_event);
++
++
++  klass->handle_frame = GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_handle_frame);
++
++  element_class->change_state =
++      GST_DEBUG_FUNCPTR (gst_v4l2_video_enc_change_state);
++
++  gst_v4l2_object_install_m2m_properties_helper (gobject_class);
++
++  g_object_class_install_property (gobject_class, PROP_BITRATE,
++        g_param_spec_int ("bitrate", "bitrate", "v4l2 encoder bitrate",
++            0, G_MAXINT, 400000,
++            G_PARAM_READWRITE | G_PARAM_CONSTRUCT | G_PARAM_STATIC_STRINGS));
++  g_object_class_install_property (gobject_class, PROP_PREPEND_HDR,
++        g_param_spec_int ("prepend-hdr", "prepend-hdr", "v4l2 encoder prepend header",
++            0, 1, 0,
++            G_PARAM_READWRITE | G_PARAM_CONSTRUCT | G_PARAM_STATIC_STRINGS));
++  g_object_class_install_property (gobject_class, PROP_GOP,
++        g_param_spec_int ("gop", "gop", "v4l2 encoder gop",
++            0, G_MAXINT, 0,
++            G_PARAM_READWRITE | G_PARAM_CONSTRUCT | G_PARAM_STATIC_STRINGS));
++}
++
++/* Probing functions */
++gboolean
++gst_v4l2_is_video_enc (GstCaps * sink_caps, GstCaps * src_caps)
++{
++  gboolean ret = FALSE;
++
++  if (gst_caps_is_subset (sink_caps, gst_v4l2_object_get_raw_caps ())
++      && gst_caps_is_subset (src_caps, gst_v4l2_object_get_codec_caps ()))
++    ret = TRUE;
++
++  return ret;
++}
+diff --git a/sys/v4l2/gstv4l2videoenc.h b/sys/v4l2/gstv4l2videoenc.h
+new file mode 100755
+index 0000000..0ba4740
+--- /dev/null
++++ b/sys/v4l2/gstv4l2videoenc.h
+@@ -0,0 +1,103 @@
++/*
++ * Copyright (C) 2014 SUMOMO Computer Association.
++ *     Author: ayaka <ayaka@soulik.info>
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Library General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Library General Public License for more details.
++ *
++ * You should have received a copy of the GNU Library General Public
++ * License along with this library; if not, write to the
++ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
++ * Boston, MA 02110-1301, USA.
++ *
++ */
++
++#ifndef __GST_V4L2_VIDEO_ENC_H__
++#define __GST_V4L2_VIDEO_ENC_H__
++
++#include <gst/gst.h>
++#include <gst/video/video.h>
++#include <gst/video/gstvideoencoder.h>
++#include <gst/video/gstvideometa.h>
++
++#include <gstv4l2object.h>
++#include <gstv4l2bufferpool.h>
++
++GST_DEBUG_CATEGORY_EXTERN (v4l2videoenc_debug);
++
++G_BEGIN_DECLS
++#define GST_TYPE_V4L2_VIDEO_ENC \
++  (gst_v4l2_video_enc_get_type())
++#define GST_V4L2_VIDEO_ENC(obj) \
++  (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_V4L2_VIDEO_ENC,GstV4l2VideoEnc))
++#define GST_V4L2_VIDEO_ENC_CLASS(klass) \
++  (G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_V4L2_VIDEO_ENC,GstV4l2VideoEncClass))
++#define GST_IS_V4L2_VIDEO_ENC(obj) \
++  (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_V4L2_VIDEO_ENC))
++#define GST_IS_V4L2_VIDEO_ENC_CLASS(obj) \
++  (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_V4L2_VIDEO_ENC))
++typedef struct _GstV4l2VideoEnc GstV4l2VideoEnc;
++typedef struct _GstV4l2VideoEncClass GstV4l2VideoEncClass;
++
++struct _GstV4l2VideoEnc
++{
++  GstVideoEncoder parent;
++
++  /* < private > */
++  GstV4l2Object *v4l2output;
++  GstV4l2Object *v4l2capture;
++
++  /* pads */
++  GstCaps *probed_srccaps;
++  GstCaps *probed_sinkcaps;
++
++  /* State */
++  GstVideoCodecState *input_state;
++  gboolean active;
++  gboolean processing;
++  gboolean finish;
++  GstFlowReturn output_flow;
++
++  /*properity*/
++  gint bitrate;
++  gint gop;
++  gint prepend_hdr;
++
++};
++
++struct _GstV4l2VideoEncClass
++{
++  GstVideoEncoderClass parent_class;
++
++  gchar *default_device;
++
++    GstFlowReturn (*handle_frame) (GstVideoEncoder * encoder,
++      GstVideoCodecFrame * frame, GstCaps * outcaps);
++};
++
++GType gst_v4l2_video_enc_get_type (void);
++
++gboolean gst_v4l2_is_video_enc (GstCaps * sink_caps, GstCaps * src_caps);
++
++void
++gst_v4l2_video_enc_set_property (GObject * object,
++    guint prop_id, const GValue * value, GParamSpec * pspec);
++
++void
++gst_v4l2_video_enc_get_property (GObject * object,
++    guint prop_id, GValue * value, GParamSpec * pspec);
++
++gboolean gst_v4l2_video_enc_register (GstPlugin * plugin,
++                                      const gchar *basename,
++                                      const gchar *device_path,
++                                      GstCaps * sink_caps, GstCaps * src_caps);
++
++G_END_DECLS
++#endif /* __GST_V4L2_VIDEO_ENC_H__ */
+diff --git a/sys/v4l2/v4l2_calls.c b/sys/v4l2/v4l2_calls.c
+old mode 100644
+new mode 100755
+index bfb6557..37f7a61
+--- a/sys/v4l2/v4l2_calls.c
++++ b/sys/v4l2/v4l2_calls.c
+@@ -39,6 +39,7 @@
+ #include <sys/ioccom.h>
+ #endif
+ #include "v4l2_calls.h"
++#include "v4l2-utils.h"
+ #include "gstv4l2tuner.h"
+ #if 0
+ #include "gstv4l2xoverlay.h"
+@@ -514,6 +515,11 @@ gst_v4l2_open (GstV4l2Object * v4l2object)
+ {
+   struct stat st;
+   int libv4l2_fd;
++  GstV4l2Iterator *it;
++  gboolean ret = TRUE;
++  it = gst_v4l2_iterator_new ();
++
++retry:
+ 
+   GST_DEBUG_OBJECT (v4l2object->element, "Trying to open device %s",
+       v4l2object->videodev);
+@@ -555,10 +561,31 @@ gst_v4l2_open (GstV4l2Object * v4l2object)
+     goto error;
+ 
+   /* do we need to be a capture device? */
++  /*
+   if (GST_IS_V4L2SRC (v4l2object->element) &&
+       !(v4l2object->vcap.capabilities & (V4L2_CAP_VIDEO_CAPTURE |
+-              V4L2_CAP_VIDEO_CAPTURE_MPLANE)))
+-    goto not_capture;
++              V4L2_CAP_VIDEO_CAPTURE_MPLANE)))*/
++  /* marked for mtk video decode will set V4L2_CAP_VIDEO_CAPTURE and
++        V4L2_CAP_VIDEO_CAPTURE_MPLANE flag*/
++
++  if (GST_IS_V4L2SRC (v4l2object->element) &&
++      !(v4l2object->vcap.capabilities & (V4L2_CAP_VIDEO_CAPTURE))) {
++        ret = gst_v4l2_iterator_next (it);
++      if (ret) {
++        v4l2object->videodev = it->device_path;
++        if (GST_V4L2_IS_OPEN (v4l2object)) {
++          v4l2_close (v4l2object->video_fd);
++          v4l2object->video_fd = -1;
++        }
++        goto retry;
++      }
++      else {
++        GST_DEBUG_OBJECT (v4l2object->element, "Cannot find capure device");
++        gst_v4l2_iterator_free (it);
++        goto not_capture;
++      }
++  }
++  gst_v4l2_iterator_free (it);
+ 
+   if (GST_IS_V4L2SINK (v4l2object->element) &&
+       !(v4l2object->vcap.capabilities & (V4L2_CAP_VIDEO_OUTPUT |
+-- 
+1.9.1
+

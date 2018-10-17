@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+<head>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+<script>
+$(document).ready(function() {
+    let xmldoc = null;
+
+    function check() {
+        $("#out").text("");
+        let hdr = xmldoc.getElementsByTagName("partition")[0];
+        if (hdr == null) {
+            $("#out").text("Error: invlaid partition file\n");
+            return;
+        }
+
+        let entries = xmldoc.getElementsByTagName("entry");
+        for (let i=0; i<entries.length; i++) {
+            if (parseInt(entries[i].getAttribute("end")) >= parseInt(hdr.getAttribute("lba"))) {
+                let error_msg = "Error: end lba of " + entries[i].getAttribute("name") + " (" + entries[i].getAttribute("end") + ") >= total lba (" + hdr.getAttribute("lba") + ")\n\n";
+                $("#out").text(error_msg);
+                return;
+            }
+        }
+    }
+
+    function show() {
+        if (xmldoc == null)
+            return;
+
+        $("#total_size").text((eval($("#total_lba").val()) * eval($("#lbs").val()) / 1024 / 1024) + "MB");
+        $("#start_addr").text((eval($("#start_lba").val()) * eval($("#lbs").val()) / 1024 / 1024) + "MB");
+
+        let text = "";
+        text = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" + xmldoc.documentElement.outerHTML;
+        text = text.replace(/>\s*</gm, ">\n<");
+        text = text.replace(/^<entry/gm, "\t<entry");
+        text = text.replace(/^\s+\n/gm, "");
+        $("#out").text($("#out").text() + text);
+    }
+
+    function init_editor() {
+        if (xmldoc == null)
+            return;
+
+        let hdr = xmldoc.getElementsByTagName("partition")[0];
+        $("#total_lba").val(hdr.getAttribute("lba"));
+        if (hdr.getAttribute("lbs") != null)
+            $("#lbs").val(hdr.getAttribute("lbs"));
+        else
+            $("#lbs").val(512);
+
+        let entries = xmldoc.getElementsByTagName("entry");
+        $("#start_lba").val(entries[0].getAttribute("start"));
+
+        let text = "";
+        for (let i=0; i<entries.length; i++) {
+            let size = ((entries[i].getAttribute("end") - entries[i].getAttribute("start") + 1)*$("#lbs").val()/1024);
+            text += (entries[i].getAttribute("name") + " " + size + "\n");
+        }
+        $("#entry_editor").val(text);
+    }
+
+    function update_xml() {
+        if (xmldoc == null)
+            return;
+
+        let hdr = xmldoc.getElementsByTagName("partition")[0];
+        hdr.setAttribute("lba", eval($("#total_lba").val()));
+
+        if (eval($("#lbs").val()) == 512)
+            hdr.removeAttribute("lbs");
+        else
+            hdr.setAttribute("lbs", eval($("#lbs").val()));
+
+        let entries = xmldoc.getElementsByTagName("entry");
+        let entry_strs = $("#entry_editor").val().split("\n");
+
+        let entry_cnt = 0;
+        for (let i=0; i<entry_strs.length; i++) {
+            if (entry_strs[i] == "")
+                continue;
+
+            if (entry_cnt >= entries.length) {
+                let newEle = xmldoc.createElement("entry");
+                newEle.setAttribute("type", entries[entry_cnt-1].getAttribute("type"));
+                hdr.appendChild(newEle);
+                entries = xmldoc.getElementsByTagName("entry");
+            }
+
+            entry = entry_strs[i].trim().split(/\s+/);
+            if (entry.length < 2)
+                continue;
+            if (entry_cnt == 0)
+                entries[entry_cnt].setAttribute("start", eval($("#start_lba").val()));
+            else
+                entries[entry_cnt].setAttribute("start", parseInt(entries[entry_cnt-1].getAttribute("end")) + 1);
+            entries[entry_cnt].setAttribute("end", (parseInt(entries[entry_cnt].getAttribute("start")) + eval(entry[1])*1024/eval($("#lbs").val()) - 1));
+            entries[entry_cnt].setAttribute("name",  entry[0]);
+            entry_cnt++;
+        }
+
+        for (; entry_cnt < entries.length;) {
+            hdr.removeChild(entries[entry_cnt]);
+            entries = xmldoc.getElementsByTagName("entry");
+        }
+    }
+
+    $("#partition").change(function() {
+        let reader = new FileReader();
+        reader.onload = function() {
+            let parser = new DOMParser();
+            xmldoc = parser.parseFromString(reader.result, "application/xml");
+            init_editor();
+            check();
+            show();
+        };
+        reader.readAsText($("#partition")[0].files[0]);
+    });
+
+    $(":text,#entry_editor").keyup(function(){
+        update_xml();
+        check();
+        show();
+    });
+
+    $(":text").change(function(){
+        $(":focus").val(eval($(":focus").val()));
+    });
+
+    $("#entry_editor").change(function(){
+        let text = "";
+        let entry_strs = $("#entry_editor").val().split("\n");
+
+        for (let i=0; i<entry_strs.length; i++) {
+            if (entry_strs[i] == "")
+                continue;
+
+            let entry = entry_strs[i].trim().split(/\s+/);
+            if (entry.length < 2)
+                continue;
+
+            text += entry[0] + " " + eval(entry[1]) + "\n";
+        }
+
+        $("#entry_editor").val(text);
+    });
+
+});
+</script>
+</head>
+<body>
+<label>partition file:
+<input type=file id="partition">
+</label>
+<br>
+<hr>
+
+<label>lba size(lbs):
+<input type=text id="lbs">
+</label>
+<br>
+<label>total lba:
+<input type=text id="total_lba">
+</label>
+<label id="total_size">
+</label>
+<br>
+<hr>
+
+<label>start lba of the first partition:
+<input type=text id="start_lba">
+</label>
+<label id="start_addr">
+</label>
+<br>
+<label> name size(KB)
+</label>
+<br>
+<textarea id=entry_editor rows=20>
+</textarea>
+<br>
+<hr>
+
+<pre id="out"></pre>
+</body>
+</html>

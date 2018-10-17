@@ -1,0 +1,13 @@
+[Unit]
+Description=Android Debug Bridge
+
+[Service]
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/data/usr/sbin:/data/usr/bin
+Type=simple
+Restart=on-failure
+ExecStartPre=/data/usr/bin/android-gadget-setup adb
+ExecStart=/data/usr/bin/adbd
+StandardOutput=null
+
+[Install]
+WantedBy=basic.target

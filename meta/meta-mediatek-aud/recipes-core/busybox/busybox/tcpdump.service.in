@@ -1,0 +1,9 @@
+[Unit]
+Description=Tcpdump Logging Service
+
+[Service]
+ExecStart=/bin/tcpdump-start
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,57 @@
+From 471f7e4e72feea16f06d806c47b05719c3d77d8f Mon Sep 17 00:00:00 2001
+From: Khem Raj <raj.khem@gmail.com>
+Date: Tue, 25 Apr 2017 15:57:33 -0700
+Subject: [PATCH 2/2] Fix printf overflow warnings
+
+Fixes
+
+../../elfutils-0.148/src/ar.c:865:49: error: '__builtin___snprintf_chk' output truncated before the last format character [-Werror=format-truncation=]
+       snprintf (tmpbuf, sizeof (tmpbuf), "/%-*ld",
+                                                 ^
+In file included from /mnt/a/build/tmp-glibc/work/cortexa7hf-neon-vfpv4-oe-linux-gnueabi/elfutils/0.148-r11/recipe-sysroot/usr/include/stdio.h:889:0,
+                 from /mnt/a/build/tmp-glibc/work/cortexa7hf-neon-vfpv4-oe-linux-gnueabi/elfutils/0.148-r11/recipe-sysroot/usr/include/argp.h:23,
+                 from ../../elfutils-0.148/src/ar.c:30:
+/mnt/a/build/tmp-glibc/work/cortexa7hf-neon-vfpv4-oe-linux-gnueabi/elfutils/0.148-r11/recipe-sysroot/usr/include/bits/stdio2.h:64:10: note: '__builtin___snprintf_chk' output 18 b
+ytes into a destination of size 17
+
+Upstream-Status: Pending
+
+Signed-off-by: Khem Raj <raj.khem@gmail.com>
+---
+ src/ar.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/ar.c b/src/ar.c
+index 8e2abbe..0bf5051 100644
+--- a/src/ar.c
++++ b/src/ar.c
+@@ -853,7 +853,7 @@ write_member (struct armem *memb, off_t *startp, off_t *lenp, Elf *elf,
+ 	      off_t end_off, int newfd)
+ {
+   struct ar_hdr arhdr;
+-  char tmpbuf[sizeof (arhdr.ar_name) + 1];
++  char tmpbuf[sizeof (arhdr.ar_name) + 2];
+ 
+   bool changed_header = memb->long_name_off != -1;
+   if (changed_header)
+@@ -1454,7 +1454,7 @@ do_oper_insert (int oper, const char *arfname, char **argv, int argc,
+ 
+ 	      /* Create the header.  */
+ 	      struct ar_hdr arhdr;
+-	      char tmpbuf[sizeof (arhdr.ar_name) + 1];
++	      char tmpbuf[sizeof (arhdr.ar_name) + 2];
+ 	      if (all->long_name_off == -1)
+ 		{
+ 		  size_t namelen = strlen (all->name);
+@@ -1464,7 +1464,7 @@ do_oper_insert (int oper, const char *arfname, char **argv, int argc,
+ 		}
+ 	      else
+ 		{
+-		  snprintf (tmpbuf, sizeof (arhdr.ar_name) + 1, "/%-*ld",
++		  snprintf (tmpbuf, sizeof (tmpbuf), "/%-*ld",
+ 			    (int) sizeof (arhdr.ar_name), all->long_name_off);
+ 		  memcpy (arhdr.ar_name, tmpbuf, sizeof (arhdr.ar_name));
+ 		}
+-- 
+2.12.2
+

@@ -1,0 +1,94 @@
+#!/bin/sh
+
+SYSLOG=busybox-syslog.service
+KLOGD=busybox-klogd.service
+CONFFILE=/data/syslog.conf
+
+function do_start() {
+	systemctl start $SYSLOG
+}
+
+function do_stop() {
+	systemctl stop $KLOGD
+	systemctl stop $SYSLOG
+}
+
+function do_set_level() {
+	LOGLEVEL="debug"
+	case $1 in
+		0)
+			LOGLEVEL="emerg" ;;
+		1)
+			LOGLEVEL="alert" ;;
+		2)
+			LOGLEVEL="crit" ;;
+		3)
+			LOGLEVEL="err" ;;
+		4)
+			LOGLEVEL="warning" ;;
+		5)
+			LOGLEVEL="notice" ;;
+		6)
+			LOGLEVEL="info" ;;
+		7)
+			LOGLEVEL="debug" ;;
+	esac
+	
+	config_init
+
+	sed -i "s/^\*\.[a-z*]*/\*\.${LOGLEVEL}/g" ${CONFFILE}
+	echo "set level $LOGLEVEL"
+}
+
+function do_set_output() {
+	config_init
+
+	sed -i "s:^\(\*\.[a-z]*[[:space:]]*\)\(.*\)$:\1${1}:g" ${CONFFILE}
+}
+
+case "$1" in
+	start )
+		do_start
+		;;
+
+	stop )
+		do_stop
+		;;
+
+	restart )
+		do_stop
+		do_start
+		;;
+
+	level )
+		LEVEL="$2"
+		if [ -z $LEVEL ]; then
+			echo "level null"
+			exit 1
+		fi
+
+		if [[ ! $LEVEL =~ ^[0-9]+$ ]]; then
+			echo "level is not digital"
+			exit 2
+		fi
+
+		if [ $LEVEL -gt 7 ]; then
+			echo "level must between 0 and 7"
+		else
+			do_set_level $LEVEL
+		fi
+		;;
+
+	enable )
+		systemctl enable busybox-syslog.service
+		;;
+
+	disable )
+		systemctl disable busybox-syslog.service
+		;;
+
+	* )
+		echo "Usage: $0 enable|disable|start|stop|restart|level (0-7)"
+		;;
+esac
+

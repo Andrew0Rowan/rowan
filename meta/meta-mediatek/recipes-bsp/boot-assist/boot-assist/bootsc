@@ -1,0 +1,91 @@
+#! /bin/bash
+
+readonly TEST_LOOP=100
+while getopts "hs:p:t:g:r:l:" argv
+do
+	case $argv in
+	t)
+		TIMEOUT=$OPTARG
+		echo TIMEOUT is $TIMEOUT ;;
+	g)
+		GOV=$OPTARG
+		echo GOV is $GOV ;;
+	p)
+		MARK=$OPTARG
+		echo MARK is $MARK ;;
+	s)
+		echo $OPTARG > /sys/kernel/debug/tracing/tracing_on ;;
+	r)
+		TARGET=$OPTARG ;;
+	l)
+		LIMITED=$OPTARG ;;
+	h)
+		echo Usage:
+		echo -t timeout, recover governor, need assign -g together
+		echo -p string, print string to bootprof
+		echo -g gov, change governor
+		echo -s echo control bit to tracing_on
+		echo -r reliability test, -r target, ex: -r Rndis_active -l 3800
+		echo -l reliability test, -l limited time [ms] ex: -r Rndis_active -l 3800
+		;;
+	*)
+		;;
+	esac
+done
+
+if [ $MARK ]; then
+	if [ -e "/proc/bootprof" ]; then
+		echo $MARK > /proc/bootprof
+	fi
+fi
+
+if [ -z $TIMEOUT ] && [ $GOV ]; then
+	if grep -q "performance" /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ; then
+		echo $GOV > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
+	fi
+	if [ -e "/tmp" ]; then
+		cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor > /tmp/gov.log
+	fi
+fi
+
+if [ $TIMEOUT ] && [ $GOV ]; then
+	sleep $TIMEOUT
+	if grep -q "performance" /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ; then
+		echo $GOV > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
+		if [ -e "/proc/bootprof" ]; then
+			echo Recover_gov > /proc/bootprof
+		fi
+	fi
+fi
+
+if [ $TARGET ] && [ $LIMITED ]; then
+	if [ ! -f /bootinfo ]; then
+		mkdir -p /bootinfo
+		touch /bootinfo/history.txt
+	fi
+	COUNT=$(cat /bootinfo/history.txt | wc -l)
+	if [ $COUNT -lt $TEST_LOOP ]; then
+		VAL=$(grep $TARGET /proc/bootprof | grep -ho "[[:digit:]]\+\.[[:digit:]]\+")
+		printf -v INT %.0f "$VAL"
+		echo $TARGET is $VAL >> /bootinfo/history.txt
+		if [ $INT -gt $LIMITED ]; then
+			echo "Rndis long active"
+			# cat /sys/kernel/debug/tracing/trace > /tmp/bootinfo/trace.log
+			# echo 0 > /sys/kernel/debug/tracing/tracing_on
+			dmesg > /bootinfo/boot.log
+			journalctl > /bootinfo/journal.log
+			systemctl --failed > /bootinfo/fail.log
+			systemd-analyze plot > /bootinfo/analyze.svg
+		else
+			echo boot time test: $COUNT
+			let COUNT++
+			if [ $COUNT -lt $TEST_LOOP ]; then
+				echo "Reboot"
+				reboot
+			else
+				echo "boot time test pass"
+				echo "boot time test pass" >> /bootinfo/history.txt
+			fi
+		fi
+	fi
+fi

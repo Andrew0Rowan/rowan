@@ -1,0 +1,491 @@
+From 7492b3468d9116e98b49d1197da686a3aa4550bb Mon Sep 17 00:00:00 2001
+From: Nelson Liu <nelson.liu@mediatek.com>
+Date: Mon, 23 Jan 2017 16:23:45 +0800
+Subject: [PATCH 2/4] dump_plane: add interface and implement for dump buffer
+
+REBASED,add a interface for dump planes' buffer to a plane assigned,
+and return value that stand for planes dumped practically.
+Test: test ok
+
+Change-Id: I6e7cab8cf31898863ab5b0d875845f1fab341f1d
+Signed-off-by: Nelson Liu <nelson.liu@mediatek.com>
+CR-Id: AUTO00000252
+---
+ clients/simple-configure-mtk.c    |  42 ++++++++++-
+ protocol/weston-configure-mtk.xml |  19 +++++
+ src/compositor-drm.c              | 153 ++++++++++++++++++++++++++++++++++++++
+ src/compositor.h                  |  12 +++
+ src/weston-configure-mtk.c        |  78 ++++++++++++++++++-
+ src/weston-configure-mtk.h        |   2 +
+ 6 files changed, 304 insertions(+), 2 deletions(-)
+
+diff --git a/clients/simple-configure-mtk.c b/clients/simple-configure-mtk.c
+index 205cef2..3f3b66d 100644
+--- a/clients/simple-configure-mtk.c
++++ b/clients/simple-configure-mtk.c
+@@ -64,6 +64,7 @@ struct display {
+ 	struct window *window;
+ 	struct wl_list ddp_prox_list; /* struct ddp_unit::link */
+ 	struct config_switch *config_switch;
++	struct config_dump *config_dump;
+ };
+ 
+ struct geometry {
+@@ -133,6 +134,8 @@ struct window {
+ 	struct ivi_surface *ivi_surface;
+ 	struct wl_callback *callback;
+ 	int fullscreen, opaque, buffer_size, overlay, format;
++	struct wl_array path;
++	int32_t plane_mask;
+ 	enum wl_output_transform transform;
+ 	int drm_card_fd;
+ 	struct wl_array array;
+@@ -552,6 +555,19 @@ _kms_device_fd(void)
+     return -1;
+ }
+ 
++static void config_dump_done(void *data,
++		 struct config_dump *config_dump,
++		 uint32_t plane_mask)
++{
++	struct display *d = data;
++
++	printf("Debug: %s plane_mask[%d]\n", __func__, plane_mask);
++}
++
++static const struct config_dump_listener config_dump_listener = {
++	config_dump_done,
++};
++
+ static void debug_drm_ddp_prop(struct window *window)
+ {
+ 	struct app_ddp_prop *ddp;
+@@ -1359,6 +1375,11 @@ registry_handle_global(void *data, struct wl_registry *registry,
+ 		d->config_switch =
+ 			wl_registry_bind(registry, name,
+ 					 &config_switch_interface, 1);
++	} else if (strcmp(interface, "config_dump") == 0) {
++		d->config_dump =
++			wl_registry_bind(registry, name,
++					 &config_dump_interface, 1);
++		config_dump_add_listener(d->config_dump, &config_dump_listener, d);
+ 	}
+ }
+ 
+@@ -1588,6 +1609,8 @@ usage(int error_code)
+ 		"                   7 --> IMG_FORMAT_YVU420\n"
+ 		"  -d           Enable debug output\n"
+ 		"  -overlay     Enable overlay switch\n"
++		"  -path        assign path to dump plane buffer(eg:/run/media/sda1)\n"
++		"  -plane_mask  assign which plane to dump(default is 0xf dump 4 plane)\n"
+ 		"  -h           This help text\n\n");
+ 
+ 	exit(error_code);
+@@ -1602,9 +1625,12 @@ main(int argc, char **argv)
+ 	int i, ret = 0;
+ 	struct file_arg *file;
+ 	struct ddp_unit *posddp, *tmpddp;
++	char *p, *src, *end;
+ 
+ 	init_window(&window);
+ 
++	wl_array_init(&window.path);
++
+ 	for (i = 1; i < argc; i++) {
+ 		if (strcmp("-f", argv[i]) == 0)
+ 			window.fullscreen = 1;
+@@ -1647,6 +1673,14 @@ main(int argc, char **argv)
+ 			debug = 1;
+ 		else if (strcmp("-overlay", argv[i]) == 0)
+ 			window.overlay = 1;
++		else if (strcmp("-path", argv[i]) == 0) {
++			src = argv[++i];
++			p = wl_array_add(&window.path, strlen(src));
++			strcpy(p, src);
++		}
++		else if (strcmp("-plane_mask", argv[i]) == 0) {
++			window.plane_mask = (int32_t)strtol(argv[++i], &end, 0);
++		}
+ 		else if (strcmp("-h", argv[i]) == 0)
+ 			usage(EXIT_SUCCESS);
+ 		else
+@@ -1667,6 +1701,9 @@ main(int argc, char **argv)
+ 	fprintf(stderr, "debug: The file is %s width/height/format[%d %d %d]\n",
+ 		file->filename, file->width, file->height, file->format);
+ 
++	if (!window.plane_mask)
++		window.plane_mask = 0xf;
++
+ 	window.geometry.width  = file->width;
+ 	window.geometry.height = file->height;
+ 	window.window_size = window.geometry;
+@@ -1676,7 +1713,7 @@ main(int argc, char **argv)
+ 	//display->window = &window;
+ 
+ 	create_surface(&window);
+-	
++
+ 	ret = init_img_texture(&window);
+ 	if (ret < 0){
+ 		fprintf(stderr, "error: init_img_texture failed\n");
+@@ -1709,10 +1746,13 @@ main(int argc, char **argv)
+ 	}
+ 	redraw(&window, NULL, 0);
+ 
++	config_dump_plane_buffer(display->config_dump, window.plane_mask, &window.path);
++
+ 	while (running && ret != -1)
+ 		ret = wl_display_dispatch(display->display);
+ 
+ 	fprintf(stderr, "debug: simple-configure-mtk exiting\n");
++	wl_array_release(&window.path);
+ 	destroy_surface(&window);
+ 	/*send message to server to logout resource.*/
+ 	wl_list_for_each_safe(posddp, tmpddp, &display->ddp_prox_list, link) {
+diff --git a/protocol/weston-configure-mtk.xml b/protocol/weston-configure-mtk.xml
+index 3d96c2a..33f1c3b 100644
+--- a/protocol/weston-configure-mtk.xml
++++ b/protocol/weston-configure-mtk.xml
+@@ -24,6 +24,25 @@
+     DEALINGS IN THE SOFTWARE.
+   </copyright>
+ 
++  <interface name="config_dump" version="1">
++    <description summary="app dump buffer for assigned plane"/>
++
++    <request name="plane_buffer">
++      <description summary="send request to server to dump data">
++       send request to server to dump buffer.
++      </description>
++	  <arg name="plane_mask" type="uint"/>
++	  <arg name="path" type="array"/>
++    </request>
++
++    <event name="done">
++      <description summary="send done for dump plane">
++        send done event to client to state which plane have dumped.
++      </description>
++	  <arg name="plane_mask" type="uint"/>
++    </event>
++  </interface>
++
+   <interface name="config_switch_set" version="1">
+     <description summary="app interface for setting configure for the surface"/>
+ 
+diff --git a/src/compositor-drm.c b/src/compositor-drm.c
+index 7104a42..3ed1fcd 100644
+--- a/src/compositor-drm.c
++++ b/src/compositor-drm.c
+@@ -60,6 +60,7 @@
+ #include "linux-dmabuf.h"
+ #include "weston-configure-mtk.h"
+ #include "mdp-drm-share-mtk.h"
++#include "weston-configure-mtk-server-protocol.h"
+ 
+ #define ATOMIC_DEBUG getenv("ATOMIC_DEBUG")
+ 
+@@ -4417,6 +4418,154 @@ err_free:
+ 	return -1;
+ }
+ 
++static int
++_write_file(void *buf, int len, const char *file_name)
++{
++    int ret, nwrite = 0;
++
++    FILE *fp = fopen(file_name, "wb");
++    if (!fp)
++    {
++        fprintf(stderr,"debug: file %s open failed\n", file_name);
++        return -1;
++    }
++
++    while (nwrite < len) {
++        ret = fwrite(buf + nwrite, 1, len - nwrite, fp);
++        if (!ret)
++                break;
++        nwrite += ret;
++    }
++
++    fclose(fp);
++    return 0;
++}
++
++static int32_t
++drm_dump_single_plane_buffer(struct drm_plane *s, int32_t *done)
++{
++	struct drm_backend *backend = s->backend;
++	struct weston_compositor *ec = backend->compositor;
++	int32_t fd = backend->drm.fd;
++	struct drm_fourcc_info *format_info;
++	void *map = NULL;
++	char filename[64];
++	int32_t ret, width, height;
++	uint32_t format, size;
++	char *plane_type = NULL;
++
++	weston_log("[dump]%s %d plane_id[%d]\n", __func__, __LINE__, s->plane_id);
++	//now not have good idea when to dump buffer, maybe add signal
++	//triggered after render. (reference to screenshotter)
++	if (s->current) {
++		struct drm_mode_map_dumb map_arg;
++
++		if (s->current->size)
++			size = s->current->size;
++		else if (s->current->bo) {
++			format = gbm_bo_get_format(s->current->bo);
++			width = gbm_bo_get_width(s->current->bo);
++			height = gbm_bo_get_height(s->current->bo);
++			format_info = get_drm_format_info(format);
++			size = format_info->bpp * width * height / 8;
++			s->current->size = size;
++		} else {
++			weston_log("error: fail to find buffer size for plane to dump\n");
++			return -1;
++		}
++
++		if (s->current->map) {
++			map = s->current->map;
++		} else if (s->current->bo) {
++			map_arg.handle =  gbm_bo_get_handle(s->current->bo).u32;
++			ret = drmIoctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &map_arg);
++			if (ret) {
++					fprintf(stderr,"error: drmIoctl MAP DUMP fail ret[%d]\n", ret);
++					return -1;
++			}
++
++			weston_log("[dump]%s %d plane_id[%d] size/fd/offset[%u %d %u]\n",
++				__func__, __LINE__, s->plane_id, size, fd, (uint32_t)map_arg.offset);
++
++			map = mmap(NULL, size, PROT_WRITE|PROT_READ , MAP_SHARED, fd, map_arg.offset);
++			if (map == MAP_FAILED) {
++				perror("mmap fail:");
++			}
++		} else {
++			weston_log("error: fail to get map address\n");
++			return -1;
++		}
++
++		if (s->type == WDRM_PLANE_TYPE_OVERLAY)
++			plane_type = "overlay";
++		else if(s->type == WDRM_PLANE_TYPE_CURSOR)
++			plane_type = "cursor";
++		else
++			plane_type = "primary";
++
++		snprintf(filename, 64, "%s/_dump_plane_%s_%u_%d_%ux%u",
++			ec->dump->path, plane_type, weston_compositor_get_time(),
++			s->plane_id, s->src_w >> 16, s->src_h >> 16);
++
++		_write_file(map, size, filename);
++
++		if (!s->current->map)
++			munmap(map, s->current->size);
++
++		*done = 1;
++	}
++
++	return 0;
++}
++
++/**
++* dump plane buffer
++* plane_mask: 1 stand for need to dump buffer, and high bit match plane
++* have high plane id
++**/
++static int32_t
++drm_dump_plane_buffer(struct weston_compositor *ec)
++{
++	struct drm_backend *b = (struct drm_backend *) ec->backend;
++	struct config_dump *dump = (struct config_dump *) ec->dump;
++	uint32_t mask = 0, plane_num = 0;
++	uint32_t i = 0, mask_tmp, mask_ret = 0;;
++	int32_t done = 0;
++	struct drm_plane *s;
++	struct wl_resource *resource;
++
++	wl_list_for_each(s, &b->plane_list, link) {
++		weston_log("[dump] %s %d plane_id[%d]\n", __func__, __LINE__, s->plane_id);
++		mask = mask ? ((mask << 1) | 1) : 1;
++		plane_num += 1;
++	}
++
++	weston_log("[dump]%u %s %d mask[%u] plane_num[%d]\n",
++		weston_compositor_get_time(), __func__, __LINE__, mask, plane_num);
++	mask_tmp = (dump->in_plane_mask) & mask;
++	//compare from low plane id
++	wl_list_for_each_reverse(s, &b->plane_list, link) {
++		if (mask_tmp & BIT(i)) {
++			done = 0;
++			drm_dump_single_plane_buffer(s, &done);
++			if (done)
++				mask_ret |= BIT(i);
++		}
++
++		i++;
++	}
++	dump->out_plane_mask = mask_ret;
++
++	/*send done event*/
++	wl_resource_for_each(resource, &dump->dump_res_list) {
++		config_dump_send_done(resource, dump->out_plane_mask);
++	}
++
++	wl_event_source_remove(ec->dump_source);
++
++	return 0;
++}
++
+ /**
+ * Get type for a DRM plane
+ *
+@@ -5328,6 +5477,10 @@ backend_init(struct weston_compositor *compositor,
+ 	if (b == NULL)
+ 		return -1;
+ 
++	config_dump_global_create(compositor);
++
++	compositor->dump_plane = drm_dump_plane_buffer;
++
+ 	mdp_backend_init = weston_load_module("mdp-renderer-mtk.so", "mdp_backend_init");
+ 	if (!mdp_backend_init) {
+ 		weston_log("warning: not find mdp-renderer.so\n");
+diff --git a/src/compositor.h b/src/compositor.h
+index 97dccd1..3f1948f 100644
+--- a/src/compositor.h
++++ b/src/compositor.h
+@@ -207,6 +207,15 @@ struct plane_base_prop{
+ 	enum plane_prop_changed dirty;
+ };
+ 
++/*main for dump plane buffer*/
++struct config_dump{
++	struct wl_list dump_res_list;
++	uint32_t in_plane_mask;
++	char path[64];
++	uint32_t out_plane_mask;
++	void *private;
++};
++
+ /*drm data path properties, one crtc match multi-plane*/
+ struct ddp_prop{
+ 	struct wl_list ddp_res_list;
+@@ -786,6 +795,9 @@ struct weston_compositor {
+ 	struct wl_display *wl_display;
+ 	struct weston_shell_interface shell_interface;
+ 	struct weston_config *config;
++	struct config_dump *dump;
++	int32_t (*dump_plane)(struct weston_compositor *ec);
++	struct wl_event_source *dump_source;
+ 
+ 	/* surface signals */
+ 	struct wl_signal create_surface_signal;
+diff --git a/src/weston-configure-mtk.c b/src/weston-configure-mtk.c
+index 3f6509e..88492a7 100644
+--- a/src/weston-configure-mtk.c
++++ b/src/weston-configure-mtk.c
+@@ -230,7 +230,6 @@ config_drm_set_plane_zpos(struct wl_client *client, struct wl_resource *resource
+ 	}
+ }
+ 
+-
+ static const struct config_ddp_prop_interface config_ddp_set_interface = {
+ 	config_drm_set_plane_zpos,
+ 	config_drm_set_plane_colorkey,
+@@ -411,3 +410,80 @@ config_switch_global_create(struct weston_compositor *ec)
+ 	return 0;
+ }
+ 
++static void
++config_dump_destroy(struct wl_resource *resource)
++{
++	wl_list_remove(wl_resource_get_link(resource));
++}
++
++static void
++config_dump_plane_buffer_handle(struct wl_client *client,
++						struct wl_resource *resource,
++						uint32_t plane_mask, struct wl_array *path)
++{
++	struct config_dump *dump = wl_resource_get_user_data(resource);
++	struct weston_compositor *ec = (struct weston_compositor *)dump->private;
++	struct wl_event_loop *loop;
++
++	weston_log("[dump]%u %s %d mask[%u]\n",
++		weston_compositor_get_time(), __func__, __LINE__, plane_mask);
++	ec->dump->in_plane_mask = plane_mask;
++	strncpy(ec->dump->path, path->data, path->size);
++
++	if (ec->dump_plane) {
++		loop = wl_display_get_event_loop(ec->wl_display);
++		ec->dump_source = wl_event_loop_add_timer(loop, ec->dump_plane, ec);
++		wl_event_source_timer_update(ec->dump_source, 2000); // capture plane buffer 2s later
++	} else
++		weston_log("[dump] weston not support dump plane data\n");
++}
++
++static const struct config_dump_interface config_dump_handle_interface = {
++	config_dump_plane_buffer_handle,
++};
++
++static void
++bind_config_dump(struct wl_client *client,
++		void *data, uint32_t version, uint32_t id)
++{
++	struct config_dump *dump = (struct config_dump *)data;
++	struct wl_resource *resource;
++
++	resource = wl_resource_create(client, &config_dump_interface,
++				      MIN(version, 1), id);
++	if (resource == NULL) {
++		wl_client_post_no_memory(client);
++		return;
++	}
++
++	wl_list_insert(&dump->dump_res_list, wl_resource_get_link(resource));
++
++	wl_resource_set_implementation(resource, &config_dump_handle_interface,
++				       dump, config_dump_destroy);
++}
++
++WL_EXPORT int
++config_dump_global_create(struct weston_compositor *ec)
++{
++	struct config_dump *dump;
++
++	if(!ec)
++		return -1;
++
++	dump = zalloc(sizeof *dump);
++	if (dump == NULL)
++		return -1;
++
++	wl_list_init(&dump->dump_res_list);
++
++	dump->private = (void *)ec;
++	ec->dump = dump;
++	if (!wl_global_create(ec->wl_display, &config_dump_interface, 1,
++			  dump, bind_config_dump)){
++		fprintf(stderr, "error: failed to config_dump_global_create: %s\n", dlerror());
++		return -1;
++	}
++
++	return 0;
++}
++
+diff --git a/src/weston-configure-mtk.h b/src/weston-configure-mtk.h
+index 7b80e65..d736a47 100644
+--- a/src/weston-configure-mtk.h
++++ b/src/weston-configure-mtk.h
+@@ -47,6 +47,8 @@ extern "C" {
+ int config_switch_global_create(struct weston_compositor *ec);
+ int config_ddp_prop_global_create(struct weston_output *o);
+ void config_ddp_prop_global_destroy(struct weston_output *o);
++WL_EXPORT int config_dump_global_create(struct weston_compositor *ec);
++
+ 
+ #ifdef  __cplusplus
+ }
+-- 
+1.9.1
+

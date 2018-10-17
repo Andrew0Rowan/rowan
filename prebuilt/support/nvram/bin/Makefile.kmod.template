@@ -1,0 +1,260 @@
+##
+#	@author mtk02202 
+
+##
+#	@breif DOXYGEN template
+#
+DOC_GEN ?= $(PREFIX)/KMODAPITemp.txt
+
+##
+#	@brief include path
+#
+INCLUDE := $(INCLUDE) -I$(shell pwd)/include -I$(SYSROOT)/usr/include -I$(SYSROOT)/include
+
+
+##
+#	@breif Our kernel EXTRA_CFLAGS. CONFIG is set by users
+#
+EXTRA_CFLAGS?=$(CONFIG) $(EXTRA_CONFIG) $(INCLUDE)
+
+##
+#	@breif Our include path
+#
+ifeq ($(CROSS),arm-none-linux-)
+ARCH=arm
+else
+ifeq ($(CROSS),arm-linux-)
+ARCH=arm
+endif
+ifeq ($(CROSS),arm-uclinuxeabi-)
+ARCH=arm
+endif
+ifeq ($(CROSS),aarch64-linux-)
+ARCH=arm64
+endif
+
+ifeq ($(CROSS),mipsel-linux-)
+ARCH=mips
+endif
+
+endif
+
+
+
+##
+#	@breif Our include path
+#
+ifeq ($(CROSS),arm-none-linux-)
+KBUILD_EXTRA_INCLUDE = $(PREFIX)/arm-none-linux/usr/include/asm/arch
+endif
+
+ifeq ($(CROSS),arm-linux-)
+KBUILD_EXTRA_INCLUDE = $(PREFIX)/arm-linux/usr/include/asm/arch
+endif
+
+ifeq ($(CROSS),arm-uclinuxeabi-)
+KBUILD_EXTRA_INCLUDE = $(PREFIX)/arm-uclinuxeabi/usr/include/asm/arch
+endif
+
+ifeq ($(CROSS),aarch64-linux-)
+KBUILD_EXTRA_INCLUDE = $(PREFIX)/aarch64-linux/usr/include/asm/arch
+endif
+
+ifeq ($(CROSS),mipsel-linux-)
+KBUILD_EXTRA_INCLUDE = $(PREFIX)/mipsel-linux/usr/include/asm/arch
+endif
+
+##
+#	@breif Extra Module.symvers
+#
+KBUILD_EXTRA_SYMBOLS = $(foreach mod,$(DEP_MODS),$(KBUILD_EXTRA_INCLUDE)/$(mod)/Module.symvers)
+
+
+##
+#	@brief Linux kernel kbuild system and module dependence check
+#	
+ifneq ($(KERNELRELEASE),)
+
+obj-m := $(NAME).o
+
+else
+
+KERNEL_OUT_DIR = $(shell cat $(KERNELDIR)/kernel_outdir 2> /dev/null)
+
+ifeq ($(CROSS),arm-linux-)
+ifeq ($(KERNEL_OUT_DIR),)
+KERNELRELEASE = $(shell cat $(KERNELDIR)/include/config/kernel.release 2> /dev/null)
+else
+KERNELRELEASE = $(shell cat $(KERNEL_OUT_DIR)/include/config/kernel.release 2> /dev/null)
+endif
+endif
+
+ifeq ($(CROSS),aarch64-linux-)
+ifeq ($(KERNEL_OUT_DIR),)
+KERNELRELEASE = $(shell cat $(KERNELDIR)/include/config/kernel.release 2> /dev/null)
+else
+KERNELRELEASE = $(shell cat $(KERNEL_OUT_DIR)/include/config/kernel.release 2> /dev/null)
+endif
+endif
+
+ifeq ($(CROSS),mipsel-linux-)
+KERNELRELEASE = $(shell cat $(KERNELDIR)/include/config/kernel.release 2> /dev/null)
+endif
+
+default:all
+post-build:
+post-install:
+post-clean:
+
+
+##
+#	@brief Generate documentation
+#
+ifneq ($(MIN),y)
+doc: $(wildcard include/*.h) $(DOC_GEN)
+	mkdir -p doc include
+	doxygen $(DOC_GEN)
+	mkdir -p $(SYSROOT)/doc
+else
+doc:
+	@echo "**NO documentation because MIN=$(MIN)"
+endif
+
+##
+#	@breif  Generate _x.ko
+#
+%_x.ko:$(shell find -name "*.[hc]")
+	bash -c '$(MAKE) -C $(KERNELDIR) M=$(shell pwd) \
+				modules ARCH=$(ARCH) \
+				CROSS_COMPILE=$(CROSS) \
+				NAME=$(@:%_x.ko=%_x) \
+				EXTRA_CFLAGS="$(EXTRA_CFLAGS) -D_UNIT_$(@:%_x.ko=%) -D_UNIT_ " \
+				O=$(KERNEL_OUT_DIR)'
+	rm -f $(@:%_x.ko=%.o)
+
+VPATH=src/test
+%_xx.ko: %.c
+	$(MAKE) -C $(KERNELDIR) M=$(shell pwd) \
+			modules ARCH=$(ARCH) \
+			CROSS_COMPILE=$(CROSS) \
+			NAME=$(@:%_xx.ko=%_xx) \
+			$(@:%_xx.ko=%_xx)-objs=$(^:%.c=%.o) \
+			EXTRA_CFLAGS="$(EXTRA_CFLAGS) -D_UNIT_$(@:%_xx.ko=%) -D_UNIT_ " \
+			O=$(KERNEL_OUT_DIR)
+
+%_xx.ko.install: %_xx.ko
+	mkdir -p $(INSTALL_MOD_PATH)/lib/modules/$(shell cat $(SYSROOT)/lib/modules/version)/$(INSTALL_MOD_DIR)
+	cp $^ $(INSTALL_MOD_PATH)/lib/modules/$(shell cat $(SYSROOT)/lib/modules/version)/$(INSTALL_MOD_DIR)
+
+##
+#	@breif Daily auto build dependence checking
+#
+.PHONY: _dep_check
+_dep_check: make_deps
+
+##
+#	@breif Check dependence
+#
+.PHONY: make_deps
+make_deps:
+	@bash -c 'for mod in $(DEP_MODS); \
+		do 			\
+			echo $(KBUILD_EXTRA_SYMBOLS); \
+			if [ ! -e $(KBUILD_EXTRA_INCLUDE)/$$mod ]; then \
+				echo "[FAIL] No mod-$$mod"; \
+				exit 1; \
+			else \
+				echo "[PASS] mod-$$mod"; \
+			fi; \
+		done; \
+		echo "**** All depend modules have been installed ****"; \
+		echo "";' 
+	@echo DEP_MODS=$(DEP_MODS) > info.text
+ 
+ifeq ($(strip $(MLOG_MODULE)),1) 
+.PHONY:mlog_cksrc
+mlog_cksrc:
+	@$(PREFIX)/bin/mlog.pl -C
+.PHONY:mlog_parse
+mlog_parse:
+	@$(PREFIX)/bin/mlog.pl -P
+endif
+all:$(PRE) make_deps  $(UNIT) $(UNITX)
+	$(MAKE)	-C $(KERNELDIR) M=$(shell pwd) modules ARCH=$(ARCH) CROSS_COMPILE=$(CROSS) EXTRA_CFLAGS="$(EXTRA_CFLAGS)" O=$(KERNEL_OUT_DIR) PREFIX=$(PREFIX)
+	$(MAKE) -C $(shell pwd) post-build O=$(KERNEL_OUT_DIR) PREFIX=$(PREFIX)
+
+module.files:
+	bash -c 'find `pwd`/src `pwd`/include -name "*.h" -or -name "*.hxx" -or -name "*.[cCsS]" \
+	  -or -name "*.cxx" -or -name "*.cpp" -or -name "*.inl" > module.files; echo ""'
+	  
+index:module.files
+	@bash -c 'rm -f cscope.files ; \
+			 LIST=$$(ls $(SYSROOT)/doc/*.files 2>/dev/null) ; \
+			 for T in $$LIST; do \
+			 	if [ $$T != $(SYSROOT)/doc/$(NAME).files ]; then \
+			 		cat $$T >> cscope.files; \
+				fi ; \
+				done'
+	cat module.files >> cscope.files
+	cscope -b -c -icscope.files
+	
+install:doc all module.files $(foreach U,$(UNITX), $(U).install ) $(INSTALL)
+	$(MAKE)	-C $(KERNELDIR) M=$(shell pwd) modules_install ARCH=$(ARCH) CROSS_COMPILE=$(CROSS) INSTALL_MOD_PATH=$(INSTALL_MOD_PATH) INSTALL_MOD_DIR=$(INSTALL_MOD_DIR) O=$(KERNEL_OUT_DIR) PREFIX=$(PREFIX)
+	#@cp module.files $(SYSROOT)/doc/$(NAME).files
+	@mkdir -p $(KBUILD_EXTRA_INCLUDE)/$(NAME)
+	echo "@mkdir -p $(KBUILD_EXTRA_INCLUDE)/$(NAME)"
+	@bash -c 'if [ ! "`echo include/*.h`" = "include/*.h" ]; then  \
+			cp -f -a include/* $(KBUILD_EXTRA_INCLUDE)/$(NAME); \
+		fi '
+ifeq ($(CROSS),arm-none-linux-)
+	$(PREFIX)/bin/sym.pl insert $(NAME)
+else
+ifeq ($(CROSS),arm-linux-)
+	@echo ""
+endif
+
+ifeq ($(strip $(CROSS)),arm-poky-linux-gnueabi-)
+	@echo ""
+endif
+
+ifeq ($(CROSS),aarch64-linux-)
+	@echo ""
+else
+ifeq ($(CROSS),aarch64-poky-linux-)
+	@echo ""
+else
+	#@bash -c 'if [ -e Module.symvers ]; then cp Module.symvers ../install/include/asm/arch/$(NAME); fi;'
+	@bash -c 'if [ -e Module.symvers ]; then cp Module.symvers $(KBUILD_EXTRA_INCLUDE)/$(NAME); fi;'
+endif
+endif
+endif
+
+ifneq ($(MIN),y)
+	@mkdir -p $(SYSROOT)/doc/mod-$(NAME)/
+	install -p doc/html/* $(SYSROOT)/doc/mod-$(NAME)/
+	wimac_doc.sh $(SYSROOT) > $(SYSROOT)/doc/index.html
+	cp -f info.text $(SYSROOT)/doc/mod-$(NAME).info
+endif
+ifeq ($(MLOG_MODULE),1)
+	@$(PREFIX)/bin/mlog.pl -P
+endif
+	$(MAKE) -C $(shell pwd) post-install O=$(KERNEL_OUT_DIR) PREFIX=$(PREFIX)
+
+clean:$(CLEAN)
+	rm -f *.o *.mod.c *.d module.order module.files info.text
+ifeq ($(CROSS),arm-none-linux-)
+	$(PREFIX)/bin/sym.pl delete $(NAME)
+endif
+	rm -rf *~ .tmp_version
+	rm -rf doc
+	$(MAKE) -C $(KERNELDIR) M=$(shell pwd) PREFIX=$(PREFIX) clean O=$(KERNEL_OUT_DIR)
+	rm -rf $(KBUILD_EXTRA_INCLUDE)/$(NAME)
+	$(MAKE) -C $(shell pwd) post-clean O=$(KERNEL_OUT_DIR) PREFIX=$(PREFIX)
+
+endif
+
+SDK_install::
+	@echo "copy .ko into $(INSTALL_MOD_PATH)/lib/modules/2.6.26.8-rt16/$(INSTALL_MOD_DIR)"
+	@bash -c 'mkdir -p $(INSTALL_MOD_PATH)/lib/modules/2.6.26.8-rt16/$(INSTALL_MOD_DIR)'
+	@bash -c 'cp -f $(shell find -iname "*.ko" | grep -v "_x.ko") $(INSTALL_MOD_PATH)/lib/modules/2.6.26.8-rt16/$(INSTALL_MOD_DIR)'
+	@bash -c 'chmod a+w $(INSTALL_MOD_PATH)/lib/modules/2.6.26.8-rt16/$(INSTALL_MOD_DIR)/*.ko'

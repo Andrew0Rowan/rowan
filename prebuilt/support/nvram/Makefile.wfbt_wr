@@ -1,0 +1,15 @@
+NAME = nvram_daemon
+LIB = lib$(NAME).a lib$(NAME).so
+INSTALL = _install
+UNINSTALL = _uninstall 
+
+include $(PREFIX)/Makefile.prebuilt.template
+
+
+all:
+_install:
+	mkdir -p $(ROOT)/sbin
+	cp -af ./sbin/wfbt_wr $(ROOT)/sbin/
+
+_uninstall:
+	rm -f $(ROOT)/sbin/wfbt_wr

@@ -1,0 +1,103 @@
+###
+#	@file Makefile.prebuilt.template
+#   @breif This is the file user has to setup locally for different host environment
+#
+#	@param VOBJ	object files applicable for compilation
+#	@param LOBJ object files included in lib$(NAME).a
+#	@param COBJ object files applicable to standard-make-targets
+#
+#	@author Howard Chen
+##
+GCC ?= $(CROSS)gcc
+CC ?= $(GCC)
+CXX ?= $(CROSS)g++
+OBJDUMP = $(CROSS)objdump
+OBJCOPY = $(CROSS)objcopy
+AR		= $(CROSS)ar
+
+SUBLPATH?= $(SUBVPATH)
+INCLUDE ?= $(DEF_INCLUDE)
+CFLAGS	?= $(DEF_CFLAGS)
+ASFLAGS ?= $(DEF_ASFLAGS)
+LDFLAGS	?= $(DEF_LDFLAGS)
+DOC_GEN ?= $(PREFIX)/APITemp.txt
+
+VPATH	?= src $(SUBVPATH)
+VOBJ 	?= 	$(patsubst %.S,%.o, \
+			$(patsubst %.s,%.o, \
+			$(patsubst %.c,%.o, \
+			$(patsubst %.cpp, %.o, \
+				$(notdir $(foreach DIR,$(VPATH),\
+					$(wildcard $(DIR)/*.S)	\
+					$(wildcard $(DIR)/*.s)	\
+					$(wildcard $(DIR)/*.c) 	\
+					$(wildcard $(DIR)/*.cpp)))))))
+
+LPATH	?= src $(SUBLPATH)
+LOBJ 	?= 	$(patsubst %.S,%.o, \
+			$(patsubst %.s,%.o, \
+			$(patsubst %.c,%.o, \
+			$(patsubst %.cpp, %.o, \
+				$(notdir $(foreach DIR,$(LPATH),\
+					$(wildcard $(DIR)/*.S)	\
+					$(wildcard $(DIR)/*.s)	\
+					$(wildcard $(DIR)/*.c) 	\
+					$(wildcard $(DIR)/*.cpp)))))))
+COBJ    ?=	$(patsubst %.c,%.o, \
+			$(patsubst %.cpp, %.o, \
+				$(notdir $(foreach DIR,$(VPATH),\
+					$(wildcard $(DIR)/*.c) 	\
+					$(wildcard $(DIR)/*.cpp)))))
+DEP 	= $(COBJ:%.o=%.d)
+TEST	= $(COBJ:%.o=%.x)
+RUNS	= $(COBJ:%.o=%.x.run)
+
+MIN ?=1
+
+default: all
+
+all:
+
+gen_dir:
+	mkdir -p $(ROOT)/bin
+	mkdir -p $(ROOT)/${base_libdir}
+	mkdir -p $(ROOT)/$(includedir)/$(NAME)
+ifeq ($(strip $(MIN)),1)
+	mkdir -p $(ROOT)/doc
+else
+	mkdir -p $(ROOT)/doc/$(NAME)
+endif
+
+	mkdir -p $(ROOT)/test/$(NAME)
+
+install: gen_dir $(INSTALL)
+	rm -f $(ROOT)/${base_libdir}/lib$(NAME).* $(ROOT)/${base_libdir}/$(NAME).dll
+
+ifdef LIB
+ifneq ($(strip $(LIB)), dummy)
+ifneq ($(strip $(base_libdir)),"")
+	install -p ./$(base_libdir)/lib$(NAME).* $(ROOT)/$(base_libdir)/
+endif
+endif
+endif
+	bash -c 'if ls *.x > /dev/null 2>&1 ; then install *.x $(ROOT)/test/$(NAME); fi'
+	bash -c 'if [ -e ./$(includedir)/$(NAME) ] && [ "$(shell ls -A "./$(includedir)/$(NAME)")" ]; then rm -rf $(ROOT)/$(includedir)/$(NAME)/*; cp -af ./$(includedir)/$(NAME)/* $(ROOT)/$(includedir)/$(NAME); fi'
+ifeq ($(strip $(MIN)),1)
+else
+	install -p doc/html/* $(ROOT)/doc/$(NAME)/
+endif
+	bash -c 'if [ -e ./doc/$(NAME).files ]; then cp ./doc/$(NAME).files  $(ROOT)/doc/$(NAME).files; fi'
+	bash -c 'if [ -e ./doc/$(NAME).info ]; then cp ./doc/$(NAME).info $(ROOT)/doc/$(NAME).info; fi'
+
+
+uninstall: $(UNINSTALL)
+	rm -rf $(ROOT)/$(includedir)/$(NAME)
+	rm -rf $(ROOT)/test/$(NAME)
+ifneq ($(strip $(LIB)), dummy)
+	cd $(ROOT)/$(base_libdir)/ && rm -f $(LIB)
+endif
+	rm -f  $(ROOT)/doc/$(NAME).files
+	rm -f  $(ROOT)/doc/$(NAME).info
+
+
+

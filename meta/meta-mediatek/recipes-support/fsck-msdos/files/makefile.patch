@@ -1,0 +1,19 @@
+diff --git a/Makefile b/Makefile
+new file mode 100644
+index 0000000..e0cce70
+--- /dev/null
++++ b/Makefile
+@@ -0,0 +1,13 @@
++TARGET  := fsck_msdos
++SOURCES := boot.c check.c dir.c fat.c main.c
++OBJECTS := $(SOURCES:.c=.o)
++
++.PHONY: all clean install
++
++all: $(TARGET)
++
++$(TARGET): $(OBJECTS)
++	$(LINK.o) $^ -o $@
++
++clean: 
++	$(RM) $(OBJECTS) $(TARGET)

@@ -1,0 +1,107 @@
+#!/bin/sh
+#	@author CC Ma
+#	@date	2009/03/13
+#	@brief
+#		ifconfig event handling script
+#
+
+usage() {
+	echo "Usage: $0 {ip_mask/down} interface ..."
+	exit 1
+}
+
+count=1
+if [ $# \< $count ] ; then
+	usage
+fi
+
+case "$1" in
+	ip_mask)
+		# [IF Down]
+		count=6
+		if [ $# \< $count ] ; then
+   	       usage
+       fi		
+		netif=$2
+		# ifconfig $netif down
+		# [IF ip mask]
+		ip=$3
+		mask=$4
+		echo "ifconfig $netif $ip netmask $mask"
+		ifconfig $netif $ip netmask $mask
+	    ret=$?
+	    if [ $ret != 0 ] ; then
+	    	echo "ifconfig FAIL"
+	        #exit 1     ##delay termination to correctly update the information in /var/dhcpinfo.  
+       fi 
+       echo "ifconfig ok"	
+       if [ "$5" = "gw" ] ; then
+         gw=$6		 	 
+		 echo "deleting routers"
+		 while route del default gw 0.0.0.0 dev $netif ; do
+				:
+		 done
+		 metric=0			
+		 route add default gw $gw dev $netif metric $((metric++))
+		 #route add default gw $gw
+		 # ret=$?
+	   fi
+#	   echo "127.0.0.1		localhost.localdomain localhost" > /etc/hosts
+#       echo "`ifconfig $netif | grep inet | awk '{print $2}' | sed -e "s/addr\://"`	`cat /etc/hostname`" >> /etc/hosts
+       
+       IPINFO="/var/dhcpinfo"
+       cat /dev/null > $IPINFO
+       ifconfig $netif | grep HWaddr | awk '{print "MAC " $5}' > $IPINFO
+       ifconfig $netif | grep inet | awk '{print $2}' | sed -e "s/addr\://" | awk '{print "IP " $0}' >> $IPINFO
+       ifconfig $netif | grep inet | awk '{print $4}' | sed -e "s/Mask\://" | awk '{print "Subnet " $0}' >> $IPINFO
+       route -n | grep UG | awk '{print "router " $2}' >> $IPINFO
+       cat /etc/resolv.conf | grep nameserver | awk '{print "DNS " $2}' >> $IPINFO
+		;;  
+	
+	auto)
+		# [IF Down]
+		echo "ifconfig interface auto"
+		netif=$2
+		ip=$3
+		mask=$4
+		
+		arping -D  $ip -w 5 -I $netif
+		ret=$?
+		if [ $ret != 0 ] ; then
+	    	echo "arp collision, please set another auto ip"
+	       exit 1
+		fi 
+		
+		echo "ifconfig $netif $ip netmask $mask"
+		ifconfig $netif $ip netmask $mask	    
+			
+		route add -net 224.0.0.0 netmask 224.0.0.0 $netif
+		IPINFO="/var/dhcpinfo"
+       cat /dev/null > $IPINFO
+       ifconfig $netif | grep HWaddr | awk '{print "MAC " $5}' > $IPINFO
+       ifconfig $netif | grep inet | awk '{print $2}' | sed -e "s/addr\://" | awk '{print "IP " $0}' >> $IPINFO
+       ifconfig $netif | grep inet | awk '{print $4}' | sed -e "s/Mask\://" | awk '{print "Subnet " $0}' >> $IPINFO
+       route -n | grep UG | awk '{print "router " $2}' >> $IPINFO
+       cat /etc/resolv.conf | grep nameserver | awk '{print "DNS " $2}' >> $IPINFO
+		;;		
+		
+	down)
+		# [IF Down]
+		echo "ifconfig interface down"
+		netif=$2
+		ifconfig $netif down
+		ret=$?
+		;;
+		
+	*)
+		usage
+	;;	
+esac
+
+if [ $ret = 0 ] ; then
+	echo "<ifconfig script> OK"
+	exit 0
+else
+	echo "<ifconfig script> FAIL"
+	exit 1
+fi 

@@ -1,0 +1,12 @@
+/dts-v1/;
+/ {
+	model = "Keys";
+	compatible = "mediatek,auto2701evb2-ivi";
+	signature {
+		key-dev {
+			required = "conf";
+			algo = "sha256,rsa2048";
+			key-name-hint = "dev";
+		};
+	};
+};

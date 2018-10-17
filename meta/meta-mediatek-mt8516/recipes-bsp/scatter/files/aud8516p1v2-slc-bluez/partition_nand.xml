@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<partition lba="65024" lbs="2048">
+	<entry type="{0FC63DAF-8483-4772-8E79-3D69D8477DE4}" start="384" end="639" name="UBOOT" />
+	<entry type="{0FC63DAF-8483-4772-8E79-3D69D8477DE4}" start="640" end="1151" name="NVRAM" />
+	<entry type="{0FC63DAF-8483-4772-8E79-3D69D8477DE4}" start="1152" end="5759" name="BOOTIMG1" />
+	<entry type="{0FC63DAF-8483-4772-8E79-3D69D8477DE4}" start="5760" end="10367" name="BOOTIMG2" />
+	<entry type="{0FC63DAF-8483-4772-8E79-3D69D8477DE4}" start="10368" end="10623" name="SEC_RO" />
+	<entry type="{0FC63DAF-8483-4772-8E79-3D69D8477DE4}" start="10624" end="10879" name="MISC" />
+	<entry type="{0FC63DAF-8483-4772-8E79-3D69D8477DE4}" start="10880" end="11647" name="TEE1" />
+	<entry type="{0FC63DAF-8483-4772-8E79-3D69D8477DE4}" start="11648" end="12415" name="TEE2" />
+	<entry type="{0FC63DAF-8483-4772-8E79-3D69D8477DE4}" start="12416" end="31871" name="ROOTFS1" />
+	<entry type="{0FC63DAF-8483-4772-8E79-3D69D8477DE4}" start="31872" end="51327" name="ROOTFS2" />
+	<entry type="{0FC63DAF-8483-4772-8E79-3D69D8477DE4}" start="51328" end="64959" name="USRDATA" />
+</partition>
+

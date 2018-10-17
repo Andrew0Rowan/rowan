@@ -1,0 +1,414 @@
+From 982d8f7c3e8c75f68da819720afd709598312015 Mon Sep 17 00:00:00 2001
+From: Nelson Liu <nelson.liu@mediatek.com>
+Date: Wed, 7 Sep 2016 20:36:34 +0800
+Subject: [PATCH 08/19] yuv-format: support yuv for primary and overlay path
+
+1.support yuv format for gpu render and overlay
+2.support multiple-plane dma buffer type
+Test: test ok
+
+Change-Id: I85039f18d97902b5884008ee456b7d1e0826e962
+Signed-off-by: Nelson Liu <nelson.liu@mediatek.com>
+CR-Id: AUTO00000252
+---
+ src/compositor-drm.c | 193 ++++++++++++++++++++++++++++++++++-----------------
+ src/gl-renderer.c    |  40 ++++++++++-
+ 2 files changed, 167 insertions(+), 66 deletions(-)
+
+diff --git a/src/compositor-drm.c b/src/compositor-drm.c
+index 84bffc5..056cbcd 100644
+--- a/src/compositor-drm.c
++++ b/src/compositor-drm.c
+@@ -228,13 +228,16 @@ struct drm_mode {
+ };
+ 
+ struct drm_fb {
+-	uint32_t fb_id, stride, handle, size;
++	uint32_t fb_id, size;
+ 	int fd;
+ 	int is_client_buffer;
+ 	struct weston_buffer_reference buffer_ref;
+ 
+ 	/* Used by gbm fbs */
+ 	struct gbm_bo *bo;
++	uint32_t strides[4];
++	uint32_t offsets[4];
++	uint32_t handles[4];
+ 
+ 	/* Used by dumb fbs */
+ 	void *map;
+@@ -997,18 +1000,18 @@ drm_fb_create_dumb(struct drm_backend *b, unsigned width, unsigned height)
+ 	if (ret)
+ 		goto err_fb;
+ 
+-	fb->handle = create_arg.handle;
+-	fb->stride = create_arg.pitch;
++	fb->handles[0] = create_arg.handle;
++	fb->strides[0] = create_arg.pitch;
+ 	fb->size = create_arg.size;
+ 	fb->fd = b->drm.fd;
+ 
+ 	ret = drmModeAddFB(b->drm.fd, width, height, 24, 32,
+-			   fb->stride, fb->handle, &fb->fb_id);
++			   fb->strides[0], fb->handles[0], &fb->fb_id);
+ 	if (ret)
+ 		goto err_bo;
+ 
+ 	memset(&map_arg, 0, sizeof map_arg);
+-	map_arg.handle = fb->handle;
++	map_arg.handle = fb->handles[0];
+ 	ret = drmIoctl(fb->fd, DRM_IOCTL_MODE_MAP_DUMB, &map_arg);
+ 	if (ret)
+ 		goto err_add_fb;
+@@ -1047,19 +1050,87 @@ drm_fb_destroy_dumb(struct drm_fb *fb)
+ 	munmap(fb->map, fb->size);
+ 
+ 	memset(&destroy_arg, 0, sizeof(destroy_arg));
+-	destroy_arg.handle = fb->handle;
++	destroy_arg.handle = fb->handles[0];
+ 	drmIoctl(fb->fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_arg);
+ 
+ 	free(fb);
+ }
+ 
+ static struct drm_fb *
++drm_fb_get_from_dma_buf(struct drm_backend *backend,
++								struct linux_dmabuf_buffer *dmabuf)
++{
++	struct drm_fb *fb ;
++	uint32_t width, height, format;
++	uint32_t handles[4];
++	int ret, i;
++
++	fb = zalloc(sizeof *fb);
++	if (fb == NULL)
++		return NULL;
++
++	width = dmabuf->attributes.width;
++	height = dmabuf->attributes.height;
++	format = dmabuf->attributes.format;
++	fb->fd = backend->drm.fd;
++
++	if (backend->min_width > width || width > backend->max_width ||
++	    backend->min_height > height ||
++	    height > backend->max_height) {
++		weston_log("bo geometry out of bounds\n");
++		goto err_free;
++	}
++
++	for (i = 0; i< dmabuf->attributes.n_planes; i++) {
++		fb->strides[i] = dmabuf->attributes.stride[i];
++		fb->offsets[i] = dmabuf->attributes.offset[i];
++
++		ret = drmPrimeFDToHandle(backend->drm.fd, dmabuf->attributes.fd[i], &(handles[i]));
++		if (ret) {
++			weston_log(" drmPrimeFDToHandle: %m\n");
++			while ( --i > 0) {
++				struct drm_gem_close gem_close= {
++					.handle = fb->handles[i]
++				};
++				ioctl(backend->drm.fd, DRM_IOCTL_GEM_CLOSE, &gem_close);
++			}
++			goto err_free;
++		}
++	}
++
++	ret = drmModeAddFB2(backend->drm.fd, width, height,
++			    format, handles, fb->strides, fb->offsets,
++			    &fb->fb_id, 0);
++	weston_log("drmModeAddFB2 fb_id: %d\n", fb->fb_id);
++	if (ret) {
++		for (i = 0; i< dmabuf->attributes.n_planes; i++) {
++			struct drm_gem_close gem_close = {
++				.handle = fb->handles[i]
++			};
++
++			if(!fb->handles[i])
++				break;
++
++			ioctl(backend->drm.fd, DRM_IOCTL_GEM_CLOSE, &gem_close);
++		}
++		weston_log("addfb2 failed: %m\n");
++		goto err_free;
++	}
++
++	return fb;
++
++err_free:
++	free(fb);
++	return NULL;
++}
++
++static struct drm_fb *
+ drm_fb_get_from_bo(struct gbm_bo *bo,
+ 		   struct drm_backend *backend, uint32_t format)
+ {
+ 	struct drm_fb *fb = gbm_bo_get_user_data(bo);
+ 	uint32_t width, height;
+-	uint32_t handles[4], pitches[4], offsets[4];
++	uint32_t handles[4];
+ 	int ret;
+ 
+ 	if (fb)
+@@ -1069,14 +1140,16 @@ drm_fb_get_from_bo(struct gbm_bo *bo,
+ 	if (fb == NULL)
+ 		return NULL;
+ 
+-	fb->bo = bo;
+-
+ 	width = gbm_bo_get_width(bo);
+ 	height = gbm_bo_get_height(bo);
+-	fb->stride = gbm_bo_get_stride(bo);
+-	fb->handle = gbm_bo_get_handle(bo).u32;
+-	fb->size = fb->stride * height;
++	fb->bo = bo;
++	fb->strides[0] = gbm_bo_get_stride(bo);
++	fb->offsets[0] = 0;
++	handles[0] = gbm_bo_get_handle(bo).u32;
++
+ 	fb->fd = backend->drm.fd;
++	fb->handles[0] = 0;
++	fb->size = 0;
+ 
+ 	if (backend->min_width > width || width > backend->max_width ||
+ 	    backend->min_height > height ||
+@@ -1088,12 +1161,9 @@ drm_fb_get_from_bo(struct gbm_bo *bo,
+ 	ret = -1;
+ 
+ 	if (format && !backend->no_addfb2) {
+-		handles[0] = fb->handle;
+-		pitches[0] = fb->stride;
+-		offsets[0] = 0;
+ 
+ 		ret = drmModeAddFB2(backend->drm.fd, width, height,
+-				    format, handles, pitches, offsets,
++				    format, handles, fb->strides, fb->offsets,
+ 				    &fb->fb_id, 0);
+ 		if (ret) {
+ 			weston_log("addfb2 failed: %m\n");
+@@ -1104,7 +1174,7 @@ drm_fb_get_from_bo(struct gbm_bo *bo,
+ 
+ 	if (ret)
+ 		ret = drmModeAddFB(backend->drm.fd, width, height, 24, 32,
+-				   fb->stride, fb->handle, &fb->fb_id);
++				   fb->strides[0], handles[0], &fb->fb_id);
+ 
+ 	if (ret) {
+ 		weston_log("failed to create kms fb: %m\n");
+@@ -1133,19 +1203,26 @@ drm_fb_set_buffer(struct drm_fb *fb, struct weston_buffer *buffer)
+ static void
+ drm_output_release_fb(struct drm_output *output, struct drm_fb *fb)
+ {
++	struct drm_backend *b = (struct drm_backend *)output->base.compositor->backend;
++
+ 	if (!fb)
+ 		return;
+ 
+ 	if (fb->map &&
+             (fb != output->dumb[0] && fb != output->dumb[1])) {
+ 		drm_fb_destroy_dumb(fb);
+-	} else if (fb->bo) {
+-		if (fb->is_client_buffer)
++	} else if (fb->is_client_buffer) {
++		if (fb->bo)
+ 			gbm_bo_destroy(fb->bo);
+-		else
+-			gbm_surface_release_buffer(output->gbm_surface,
+-						   fb->bo);
+-	}
++		else {
++			if (fb->fb_id)
++				drmModeRmFB(gbm_device_get_fd(b->gbm), fb->fb_id);
++
++			weston_buffer_reference(&fb->buffer_ref, NULL);
++			free(fb);
++		}
++	} else
++		gbm_surface_release_buffer(output->gbm_surface, fb->bo);
+ }
+ 
+ static uint32_t
+@@ -1631,7 +1708,7 @@ drm_output_repaint(struct weston_output *output_base,
+ 
+ 	mode = container_of(output->base.current_mode, struct drm_mode, base);
+ 	if (!output->primary_plane->current ||
+-	    output->primary_plane->current->stride != output->primary_plane->next->stride) {
++	    output->primary_plane->current->strides[0] != output->primary_plane->next->strides[0]) {
+ 		ret = drmModeSetCrtc(backend->drm.fd, output->crtc_id,
+ 				     output->primary_plane->next->fb_id, 0, 0,
+ 				     &output->connector_id, 1,
+@@ -1892,11 +1969,9 @@ page_flip_handler(int fd, unsigned int frame,
+ 
+ static uint32_t
+ drm_output_check_sprite_format(struct drm_plane *s,
+-			       struct weston_view *ev, struct gbm_bo *bo)
++			       struct weston_view *ev, uint32_t format)
+ {
+-	uint32_t i, format;
+-
+-	format = gbm_bo_get_format(bo);
++	uint32_t i;
+ 
+ 	if (format == GBM_FORMAT_ARGB8888) {
+ 		pixman_region32_t r;
+@@ -1986,47 +2061,37 @@ drm_output_prepare_overlay_view(struct drm_output *output,
+ 		return NULL;
+ 
+ 	if ((dmabuf = linux_dmabuf_buffer_get(buffer_resource))) {
+-#ifdef HAVE_GBM_FD_IMPORT
+-		/* XXX: TODO:
+-		 *
+-		 * Use AddFB2 directly, do not go via GBM.
+-		 * Add support for multiplanar formats.
+-		 * Both require refactoring in the DRM-backend to
+-		 * support a mix of gbm_bos and drmfbs.
+-		 */
+-		struct gbm_import_fd_data gbm_dmabuf = {
+-			.fd     = dmabuf->attributes.fd[0],
+-			.width  = dmabuf->attributes.width,
+-			.height = dmabuf->attributes.height,
+-			.stride = dmabuf->attributes.stride[0],
+-			.format = dmabuf->attributes.format
+-		};
++		s->next = drm_fb_get_from_dma_buf(b, dmabuf);
+ 
+-		if (dmabuf->attributes.n_planes != 1 || dmabuf->attributes.offset[0] != 0)
++		if (!s->next) {
++			weston_log("failed to get fb from dmabuf\n");
+ 			return NULL;
++		}
+ 
+-		bo = gbm_bo_import(b->gbm, GBM_BO_IMPORT_FD, &gbm_dmabuf,
+-				   GBM_BO_USE_SCANOUT);
+-#else
+-		return NULL;
+-#endif
++		format = drm_output_check_sprite_format(s, ev, dmabuf->attributes.format);
++		if (format == 0) {
++			drm_output_release_fb(output, s->next);
++			weston_log("failed to support format for dma-buf\n");
++			return NULL;
++		}
+ 	} else {
+ 		bo = gbm_bo_import(b->gbm, GBM_BO_IMPORT_WL_BUFFER,
+ 				   buffer_resource, GBM_BO_USE_SCANOUT);
+-	}
+-	if (!bo)
+-		return NULL;
+-
+-	format = drm_output_check_sprite_format(s, ev, bo);
+-	if (format == 0) {
+-		gbm_bo_destroy(bo);
+-		return NULL;
+-	}
++		if (!bo)
++			return NULL;
+ 
+-	s->next = drm_fb_get_from_bo(bo, b, format);
+-	if (!s->next) {
+-		gbm_bo_destroy(bo);
+-		return NULL;
++		format = drm_output_check_sprite_format(s, ev, gbm_bo_get_format(bo));
++		if (format == 0) {
++			gbm_bo_destroy(bo);
++			weston_log("failed to support format for bo\n");
++			return NULL;
++		}
++		s->next = drm_fb_get_from_bo(bo, b, format);
++		if (!s->next) {
++			gbm_bo_destroy(bo);
++			weston_log("failed to get fb from bo\n");
++			return NULL;
++		}
+ 	}
+ 
+ 	box = pixman_region32_extents(&ev->transform.boundingbox);
+@@ -2154,7 +2219,7 @@ drm_output_prepare_cursor_view(struct drm_output *output,
+ 		bo = output->gbm_cursor_bo[output->current_cursor];
+ 		/*I guess if bo is used by drm, weston should not reuse it directly.*/
+ 		cursor_bo_update(b, bo, ev);
+-		format = drm_output_check_sprite_format(output->cursor_plane, ev, bo);
++		format = drm_output_check_sprite_format(output->cursor_plane, ev, gbm_bo_get_format(bo));
+ 		if (format == 0) {
+ 			weston_log("failed to support format for cursor bo\n");
+ 			return NULL;
+@@ -3179,7 +3244,7 @@ drm_output_init_pixman(struct drm_output *output, struct drm_backend *b)
+ 		output->image[i] =
+ 			pixman_image_create_bits(PIXMAN_x8r8g8b8, w, h,
+ 						 output->dumb[i]->map,
+-						 output->dumb[i]->stride);
++						 output->dumb[i]->strides[0]);
+ 		if (!output->image[i])
+ 			goto err;
+ 	}
+diff --git a/src/gl-renderer.c b/src/gl-renderer.c
+index 23c0cd7..c3f77ca 100644
+--- a/src/gl-renderer.c
++++ b/src/gl-renderer.c
+@@ -1483,6 +1483,35 @@ gl_renderer_destroy_dmabuf(struct linux_dmabuf_buffer *dmabuf)
+ 	dmabuf_image_destroy(image);
+ }
+ 
++static int
++format_check_yuv(uint32_t format)
++{
++	switch (format) {
++	case DRM_FORMAT_YUYV:
++	case DRM_FORMAT_YVYU:
++	case DRM_FORMAT_UYVY:
++	case DRM_FORMAT_VYUY:
++	case DRM_FORMAT_AYUV:
++	case DRM_FORMAT_NV12:
++	case DRM_FORMAT_NV21:
++	case DRM_FORMAT_NV16:
++	case DRM_FORMAT_NV61:
++	case DRM_FORMAT_YUV410:
++	case DRM_FORMAT_YVU410:
++	case DRM_FORMAT_YUV411:
++	case DRM_FORMAT_YVU411:
++	case DRM_FORMAT_YUV420:
++	case DRM_FORMAT_YVU420:
++	case DRM_FORMAT_YUV422:
++	case DRM_FORMAT_YVU422:
++	case DRM_FORMAT_YUV444:
++	case DRM_FORMAT_YVU444:
++		return 0;
++	default:
++		return -1;
++	}
++}
++
+ static struct egl_image *
+ import_simple_dmabuf(struct gl_renderer *gr,
+                      struct dmabuf_attributes *attributes)
+@@ -1534,6 +1563,13 @@ import_simple_dmabuf(struct gl_renderer *gr,
+ 		attribs[atti++] = attributes->stride[2];
+ 	}
+ 
++	if (!format_check_yuv(attributes->format)) {
++		attribs[atti++] = EGL_SAMPLE_RANGE_HINT_EXT;
++		attribs[atti++] = EGL_YUV_NARROW_RANGE_EXT;
++		attribs[atti++] = EGL_YUV_COLOR_SPACE_HINT_EXT;
++		attribs[atti++] = EGL_ITU_REC601_EXT;
++	}
++
+ 	attribs[atti++] = EGL_NONE;
+ 
+ 	image = egl_image_create(gr, EGL_LINUX_DMA_BUF_EXT, NULL,
+@@ -1912,11 +1948,11 @@ gl_renderer_attach(struct weston_surface *es, struct weston_buffer *buffer)
+ 
+ 	if (shm_buffer)
+ 		gl_renderer_attach_shm(es, buffer, shm_buffer);
++	else if ((dmabuf = linux_dmabuf_buffer_get(buffer->resource)))
++		gl_renderer_attach_dmabuf(es, buffer, dmabuf);
+ 	else if (gr->query_buffer(gr->egl_display, (void *) buffer->resource,
+ 				  EGL_TEXTURE_FORMAT, &format))
+ 		gl_renderer_attach_egl(es, buffer, format);
+-	else if ((dmabuf = linux_dmabuf_buffer_get(buffer->resource)))
+-		gl_renderer_attach_dmabuf(es, buffer, dmabuf);
+ 	else {
+ 		weston_log("unhandled buffer type!\n");
+ 		weston_buffer_reference(&gs->buffer_ref, NULL);
+-- 
+1.9.1
+

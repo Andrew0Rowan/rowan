@@ -1,0 +1,12 @@
+[Unit]
+Description=new_program
+
+[Service]
+ExecStart=/usr/bin/new_program >ttyS0
+Type=simple
+StandardOutput=tty
+StandardError=tty
+
+[Install]
+Alias=new_program
+WantedBy=multi-user.target

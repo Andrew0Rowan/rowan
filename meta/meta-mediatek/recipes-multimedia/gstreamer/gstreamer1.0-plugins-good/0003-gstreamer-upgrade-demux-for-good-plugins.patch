@@ -1,0 +1,287 @@
+From 009a74668fd27845477e94f449f42c7acd9dc568 Mon Sep 17 00:00:00 2001
+From: Changtao Hu <changtao.hu@mediatek.com>
+Date: Mon, 26 Jun 2017 15:08:55 +0800
+Subject: [PATCH] gstreamer upgrade: demux for good plugins
+
+Make patch for gstreamer upgrade
+Test: OK
+
+Change-Id: I980ddb3c75301d7f029f606e99c715a961c4542a
+Signed-off-by: Changtao Hu <changtao.hu@mediatek.com>
+CR-Id: AUTO00005189
+---
+ gst/avi/gstavidemux.c         | 119 ++++++++++++++++++++++++++++++++++++++++--
+ gst/avi/gstavidemux.h         |   6 ++-
+ gst/isomp4/qtdemux.c          |   8 +--
+ gst/matroska/matroska-demux.c |  14 ++++-
+ 4 files changed, 138 insertions(+), 9 deletions(-)
+ mode change 100644 => 100755 gst/avi/gstavidemux.c
+ mode change 100644 => 100755 gst/avi/gstavidemux.h
+ mode change 100644 => 100755 gst/isomp4/qtdemux.c
+ mode change 100644 => 100755 gst/matroska/matroska-demux.c
+
+diff --git a/gst/avi/gstavidemux.c b/gst/avi/gstavidemux.c
+old mode 100644
+new mode 100755
+index 93bdc9f..06252b1
+--- a/gst/avi/gstavidemux.c
++++ b/gst/avi/gstavidemux.c
+@@ -942,6 +942,21 @@ gst_avi_demux_handle_src_event (GstPad * pad, GstObject * parent,
+ 
+ /* streaming helper (push) */
+ 
++static GstBuffer *
++gst_avi_demux_get_frame_header (GstAviDemux * avi)
++{
++  GstBuffer *buffer;
++  GstMapInfo map;
++
++  buffer = gst_buffer_new_and_alloc (4);
++
++  gst_buffer_map (buffer, &map, GST_MAP_WRITE);
++  GST_WRITE_UINT32_BE (map.data, 0x0000010D);
++  gst_buffer_unmap (buffer, &map);
++
++  return buffer;
++}
++
+ /*
+  * gst_avi_demux_peek_chunk_info:
+  * @avi: Avi object
+@@ -1951,7 +1966,23 @@ gst_avi_demux_check_caps (GstAviDemux * avi, GstAviStream * stream,
+       gst_structure_remove_field (s, "palette_data");
+       return caps;
+     }
+-  } else if (!gst_structure_has_name (s, "video/x-h264")) {
++  }
++  else if (gst_structure_has_name (s, "video/x-wmv")) {
++    if (gst_structure_has_field_typed (s, "format", G_TYPE_STRING)) {
++	  gchar *format_value;
++      gst_structure_get (s, "format", G_TYPE_STRING,
++          &format_value, NULL);
++
++	  GST_ERROR_OBJECT (avi, "format=%s", format_value);
++	  if ((!strcmp(format_value, "WVC1")) || (!strcmp(format_value, "wvc1"))
++            || (!strcmp(format_value, "WMV3")) || (!strcmp(format_value, "wmv3"))) {
++            GST_ERROR_OBJECT (avi, "remove field");
++            gst_structure_remove_field (s, "codec_data");
++	  }
++    }
++    GST_ERROR_OBJECT (avi, "after checking caps %" GST_PTR_FORMAT, caps);
++  }
++  else if (!gst_structure_has_name (s, "video/x-h264")) {
+     return caps;
+   }
+ 
+@@ -2111,8 +2142,42 @@ gst_avi_demux_parse_stream (GstAviDemux * avi, GstBuffer * buf)
+         switch (stream->strh->type) {
+           case GST_RIFF_FCC_vids:
+             stream->is_vbr = TRUE;
++	     /*read videostream header*/
++	     stream->video_header = gst_buffer_copy_region (sub, GST_BUFFER_COPY_ALL,
++               0, sizeof (gst_riff_strf_vids));
++	     stream->video_header_send_flag = TRUE;
++
+             res = gst_riff_parse_strf_vids (element, sub,
+                 &stream->strf.vids, &stream->extradata);
++
++            if (stream->extradata != NULL) {
++              guint32 fourcc;
++
++              fourcc = (stream->strf.vids->compression) ?
++                stream->strf.vids->compression : stream->strh->fcc_handler;
++              if ((GST_MAKE_FOURCC ('W', 'V', 'C', '1') == fourcc) || (GST_MAKE_FOURCC ('W', 'M', 'V', '1') == fourcc)
++                || (GST_MAKE_FOURCC ('W', 'M', 'V', '2') == fourcc) || (GST_MAKE_FOURCC ('W', 'M', 'V', '3') == fourcc)
++                || (GST_MAKE_FOURCC ('W', 'M', 'V', 'A') == fourcc)) {
++				GstBuffer  *video_seqheader = NULL;
++
++				GstMapInfo map;
++                                const guint8 *data;
++                                gsize size = 0;
++				guint32 ept_header = 0;
++
++                                gst_buffer_map (stream->extradata, &map, GST_MAP_READ);
++				data = map.data;
++                                size = map.size;
++				GST_DEBUG_OBJECT (element, "extradata size=%" G_GSIZE_FORMAT, size);
++
++				video_seqheader = gst_buffer_copy_region (stream->extradata, GST_BUFFER_COPY_ALL,
++                                  0, gst_buffer_get_size (stream->extradata));
++				stream->video_header = gst_buffer_append (stream->video_header, video_seqheader);
++				stream->ept_header_size = 0;
++				stream->add_extra_data = FALSE;
++			  }
++			}
++
+             sub = NULL;
+             GST_DEBUG_OBJECT (element, "marking video as VBR, res %d", res);
+             break;
+@@ -5151,6 +5216,7 @@ gst_avi_demux_loop_data (GstAviDemux * avi)
+   GstAviStream *stream;
+   gboolean processed = FALSE;
+   GstBuffer *buf;
++  GstBuffer *out = NULL;
+   guint64 offset, size;
+   GstClockTime timestamp, duration;
+   guint64 out_offset, out_offset_end;
+@@ -5229,13 +5295,12 @@ gst_avi_demux_loop_data (GstAviDemux * avi)
+     /* mark non-keyframes */
+     if (keyframe || stream->is_raw) {
+       GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DELTA_UNIT);
+-      GST_BUFFER_PTS (buf) = timestamp;
+     } else {
+       GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DELTA_UNIT);
+-      GST_BUFFER_PTS (buf) = GST_CLOCK_TIME_NONE;
+     }
+ 
+     GST_BUFFER_DTS (buf) = timestamp;
++    GST_BUFFER_PTS (buf) = timestamp;
+ 
+     GST_BUFFER_DURATION (buf) = duration;
+     GST_BUFFER_OFFSET (buf) = out_offset;
+@@ -5256,6 +5321,54 @@ gst_avi_demux_loop_data (GstAviDemux * avi)
+     /* update current position in the segment */
+     avi->segment.position = timestamp;
+ 
++	GST_DEBUG_OBJECT (avi, "stream->video_header_send_flag=%d", stream->video_header_send_flag);
++
++	if (stream->strh->type == GST_RIFF_FCC_vids) {
++	  guint32 fourcc;
++      GstBuffer *frame_hdr = NULL;
++	  fourcc = (stream->strf.vids->compression) ?
++          stream->strf.vids->compression : stream->strh->fcc_handler;
++	  if (TRUE == stream->video_header_send_flag) {
++		gchar *pad_name = NULL;
++
++		pad_name = GST_PAD_NAME (stream->pad);
++		GST_INFO_OBJECT (avi, "pad_name = %s", pad_name);
++
++		if (!strncmp(pad_name, "video_", strlen("video_"))) {
++		  GST_DEBUG_OBJECT (avi, "send video header,size=%" G_GSIZE_FORMAT, gst_buffer_get_size (stream->video_header));
++		  if ((GST_MAKE_FOURCC ('W', 'V', 'C', '1') == fourcc) || (GST_MAKE_FOURCC ('W', 'M', 'V', '1') == fourcc)
++			|| (GST_MAKE_FOURCC ('W', 'M', 'V', '2') == fourcc) || (GST_MAKE_FOURCC ('W', 'M', 'V', '3') == fourcc)
++			|| (GST_MAKE_FOURCC ('W', 'M', 'V', 'A') == fourcc)){
++			gst_pad_push (stream->pad, stream->video_header);
++			stream->video_header_send_flag = FALSE;
++			stream->video_header = NULL;
++		  }
++		  else {
++                        gst_buffer_unref(stream->video_header);
++			stream->video_header_send_flag = FALSE;
++			stream->video_header = NULL;
++		  }
++		}
++	  }
++
++	  //add start code in WVC1 video, remove start code in WMV1/2/3 video
++	  if (GST_MAKE_FOURCC ('W', 'V', 'C', '1') == fourcc) {
++            frame_hdr = gst_avi_demux_get_frame_header(avi);
++            buf = gst_buffer_append (frame_hdr, buf);
++	  }
++	  else if ((GST_MAKE_FOURCC ('W', 'M', 'V', '1') == fourcc) || (GST_MAKE_FOURCC ('W', 'M', 'V', '2') == fourcc)
++                || (GST_MAKE_FOURCC ('W', 'M', 'V', '3') == fourcc) || (GST_MAKE_FOURCC ('W', 'M', 'V', 'A') == fourcc)) {
++		if (stream->extradata != NULL && stream->add_extra_data == TRUE) {
++		  GstMapInfo info;
++		  out = gst_buffer_copy_region (stream->extradata, GST_BUFFER_COPY_ALL,
++                  gst_buffer_get_size (stream->extradata) - stream->ept_header_size, stream->ept_header_size);
++		  buf = gst_buffer_append (out, buf);
++		  stream->add_extra_data = FALSE;
++		  GST_DEBUG_OBJECT (avi, "add_extra_data");
++		}
++	  }
++	}
++
+     GST_DEBUG_OBJECT (avi, "Pushing buffer of size %" G_GSIZE_FORMAT ", ts %"
+         GST_TIME_FORMAT ", dur %" GST_TIME_FORMAT ", off %" G_GUINT64_FORMAT
+         ", off_end %" G_GUINT64_FORMAT,
+diff --git a/gst/avi/gstavidemux.h b/gst/avi/gstavidemux.h
+old mode 100644
+new mode 100755
+index 813ec60..9340260
+--- a/gst/avi/gstavidemux.h
++++ b/gst/avi/gstavidemux.h
+@@ -119,7 +119,11 @@ typedef struct {
+   GstTagList	*taglist;
+ 
+   gint           index_id;
+-  gboolean is_raw;
++  gboolean 		 is_raw;
++  GstBuffer      *video_header;
++  gboolean       video_header_send_flag;
++  gboolean       add_extra_data;
++  guint32		 ept_header_size;
+ } GstAviStream;
+ 
+ typedef enum {
+diff --git a/gst/isomp4/qtdemux.c b/gst/isomp4/qtdemux.c
+old mode 100644
+new mode 100755
+index 2e204d8..faecd04
+--- a/gst/isomp4/qtdemux.c
++++ b/gst/isomp4/qtdemux.c
+@@ -12420,12 +12420,12 @@ gst_qtdemux_handle_esds (GstQTDemux * qtdemux, QtDemuxStream * stream,
+       caps = gst_caps_new_simple ("audio/x-dts",
+           "framed", G_TYPE_BOOLEAN, TRUE, NULL);
+       break;
+-    case 0xE1:                 /* QCELP */
++      //case 0xE1:                 /* QCELP */
+       /* QCELP, the codec_data is a riff tag (little endian) with
+        * more info (http://ftp.3gpp2.org/TSGC/Working/2003/2003-05-SanDiego/TSG-C-2003-05-San%20Diego/WG1/SWG12/C12-20030512-006%20=%20C12-20030217-015_Draft_Baseline%20Text%20of%20FFMS_R2.doc). */
+-      caps = gst_caps_new_empty_simple ("audio/qcelp");
+-      codec_name = "QCELP";
+-      break;
++      //caps = gst_caps_new_empty_simple ("audio/qcelp");
++      //codec_name = "QCELP";
++      //break;
+     default:
+       break;
+   }
+diff --git a/gst/matroska/matroska-demux.c b/gst/matroska/matroska-demux.c
+old mode 100644
+new mode 100755
+index c82d84e..ddfd6c8
+--- a/gst/matroska/matroska-demux.c
++++ b/gst/matroska/matroska-demux.c
+@@ -476,12 +476,13 @@ gst_matroska_demux_add_stream (GstMatroskaDemux * demux, GstEbmlRead * ebml)
+         if ((ret = gst_ebml_read_uint (ebml, &id, &num)) != GST_FLOW_OK)
+           break;
+ 
++        /*
+         if (num == 0) {
+           GST_ERROR_OBJECT (demux, "Invalid TrackUID 0");
+           ret = GST_FLOW_ERROR;
+           break;
+         }
+-
++        */
+         GST_DEBUG_OBJECT (demux, "TrackUID: %" G_GUINT64_FORMAT, num);
+         context->uid = num;
+         break;
+@@ -3642,6 +3643,10 @@ gst_matroska_demux_parse_blockgroup_or_simpleblock (GstMatroskaDemux * demux,
+           GST_BUFFER_PTS (sub) = lace_time;
+       }
+ 
++     if (!GST_BUFFER_PTS_IS_VALID (sub)) {
++        GST_BUFFER_PTS (sub) = lace_time;
++      }
++
+       buffer_timestamp = gst_matroska_track_get_buffer_timestamp (stream, sub);
+ 
+       if (GST_CLOCK_TIME_IS_VALID (lace_time)) {
+@@ -5070,6 +5075,13 @@ gst_matroska_demux_video_caps (GstMatroskaTrackVideoContext *
+       if (size > sizeof (gst_riff_strf_vids)) { /* some extra_data */
+         gsize offset = sizeof (gst_riff_strf_vids);
+ 
++        char * pDest = (char *)&(vids->compression);
++        int n_wmv = strncasecmp(pDest,"WMV",3);
++        int n_wvc = strncasecmp(pDest,"WVC",3);
++        if (!n_wmv || !n_wvc) {
++          offset = 0;
++        }
++
+         buf =
+             gst_buffer_new_wrapped (g_memdup ((guint8 *) vids + offset,
+                 size - offset), size - offset);
+-- 
+1.9.1
+

@@ -1,0 +1,41 @@
+From 7b416319b8895c948cd27c440f772a0983105afe Mon Sep 17 00:00:00 2001
+From: Nelson Liu <nelson.liu@mediatek.com>
+Date: Wed, 7 Sep 2016 10:02:05 +0800
+Subject: [PATCH 02/19] libinput: fix issue for touch_event cause weston crash
+
+1.fix touch_event cause weston crash
+Test: test ok
+
+Change-Id: I21f071b1149b2dba6325eb5e3dc017d97ca99dc3
+Signed-off-by: Nelson Liu <nelson.liu@mediatek.com>
+CR-Id: AUTO00000252
+---
+ src/libinput-device.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/src/libinput-device.c b/src/libinput-device.c
+index c5d3fd1..b387dbf 100644
+--- a/src/libinput-device.c
++++ b/src/libinput-device.c
+@@ -301,6 +301,18 @@ handle_touch_with_coords(struct libinput_device *libinput_device,
+ 	x =  libinput_event_touch_get_x_transformed(touch_event, width);
+ 	y =  libinput_event_touch_get_y_transformed(touch_event, height);
+ 
++	if (x == 0)
++		x = x + 1;
++
++	if (y == 0)
++		y = y + 1;
++
++	if (x == wl_fixed_from_int(width))
++		x = x - 1;
++
++	if (y == wl_fixed_from_int(height))
++		y = y - 1;
++
+ 	weston_output_transform_coordinate(device->output,
+ 					   x, y, &x, &y);
+ 
+-- 
+1.9.1
+

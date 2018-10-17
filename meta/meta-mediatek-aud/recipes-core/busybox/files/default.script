@@ -1,0 +1,71 @@
+#!/bin/sh
+
+# udhcpc script edited by Tim Riker <Tim@Rikers.org>
+
+checkDNS(){
+  ret=1
+	if [ -f  /var/EnDns.info ]; then
+	ret=`cat "/var/EnDns.info"` 
+	fi
+		
+  if [[ $interface =~ ^p2p-p2p0-.*$ ]] || [[ $interface = "p2p0" ]] ; then 
+  echo "wifi direct dhcp, do not use DNS"
+  ret=0
+  fi
+}
+
+checkDNS
+needDNS=$ret
+
+[ -z "$1" ] && echo "Error: should be called from udhcpc" && exit 1
+
+RESOLV_CONF="/etc/resolv.conf"
+[ -n "$broadcast" ] && BROADCAST="broadcast $broadcast"
+[ -n "$subnet" ] && NETMASK="netmask $subnet"
+
+case "$1" in
+	deconfig)
+		# /sbin/ifconfig $interface 0.0.0.0
+		;;
+
+	bound)
+		/sbin/ifconfig $interface $ip $BROADCAST $NETMASK
+
+		if [ -n "$router" ] ; then
+			echo "deleting routers"
+			while route del default gw 0.0.0.0 dev $interface ; do
+				:
+			done
+
+			metric=0
+			for i in $router ; do
+				route add default gw $i dev $interface metric $((metric++))
+			done
+		fi
+	if [ $needDNS = 1 ]; then
+		/sbin/dns.script set $dns
+		[ -n "$domain" ] && echo search $domain >> $RESOLV_CONF
+	fi
+		;;
+	renew)
+		if [ $needDNS = 1 ]; then
+		/sbin/dns.script set $dns
+		[ -n "$domain" ] && echo search $domain >> $RESOLV_CONF
+		fi
+		;;
+esac
+
+if  [ -n "$ip" ] && [ "$ip" != "0.0.0.0" ] ; then
+    #Add for generating information for DHCP restart
+    echo "$ip" > /var/dhcpc.ip
+    echo "$lease" > /var/dhcpc.lease
+
+    #Add for get DNS server adress
+    echo "$serverid" > /var/dhcp_server
+		if [[ $interface =~ ^p2p-p2p0-.*$ ]] || [[ $interface = "p2p0" ]] ; then
+		mkdir -p /tmp/wpa_supplicant
+    echo "$serverid" > /tmp/wpa_supplicant/p2p_s_ip
+		fi    
+fi 
+
+exit 0

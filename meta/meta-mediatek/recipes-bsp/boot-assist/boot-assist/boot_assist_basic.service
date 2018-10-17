@@ -1,0 +1,10 @@
+[Unit]
+Description=BootAssist_Basic Service
+After=basic.target
+
+[Service]
+Type=simple
+ExecStart=-/bin/sh /usr/share/boot-assist/bootsc -t 60 -g interactive -p Basic_target_done
+
+[Install]
+WantedBy=basic.target

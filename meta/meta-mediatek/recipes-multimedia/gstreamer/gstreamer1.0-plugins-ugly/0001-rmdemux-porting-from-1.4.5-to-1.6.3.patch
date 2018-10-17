@@ -1,0 +1,151 @@
+From 72b18fc91dbb8869573755e289b379c8cc80e641 Mon Sep 17 00:00:00 2001
+From: Chuanbing Xiang <chuanbing.xiang@mediatek.com>
+Date: Fri, 2 Sep 2016 15:49:48 +0800
+Subject: [PATCH] rmdemux: porting patch from 1.4.5 to 1.6.3
+
+Porting the patch of rmdemux for gstreamer upgrade
+from 1.4.5 to 1.6.3
+Test: build pass only
+
+Signed-off-by: Chuanbing Xiang <chuanbing.xiang@mediatek.com>
+CR-Id: AUTO00001206
+---
+ gst/realmedia/rmdemux.c | 73 +++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 70 insertions(+), 3 deletions(-)
+
+diff --git a/gst/realmedia/rmdemux.c b/gst/realmedia/rmdemux.c
+index e670f98..7b0bc96 100644
+--- a/gst/realmedia/rmdemux.c
++++ b/gst/realmedia/rmdemux.c
+@@ -41,6 +41,7 @@
+ #define DATA_SIZE 8
+ 
+ #define MAX_FRAGS 256
++#define MAX_RPR_SIZE 20
+ 
+ static const guint8 sipr_subpk_size[4] = { 29, 19, 37, 20 };
+ 
+@@ -95,6 +96,9 @@ struct _GstRMDemuxStream
+   GstAdapter *adapter;
+ 
+   GstTagList *pending_tags;
++
++  guint32 rpr_size;
++  guint32 rpr_size_array[MAX_RPR_SIZE];
+ };
+ 
+ struct _GstRMDemuxIndex
+@@ -1508,7 +1512,7 @@ gst_rmdemux_add_stream (GstRMDemux * rmdemux, GstRMDemuxStream * stream)
+         stream->extra_data_size, GST_PAD_NAME (stream->pad));
+ 
+     /* add codec_data if there is any */
+-    if (stream->extra_data_size > 0) {
++    if ((stream->extra_data_size > 0) && (stream->subtype == GST_RMDEMUX_STREAM_AUDIO)) {
+       GstBuffer *buffer;
+ 
+       buffer = gst_buffer_new_and_alloc (stream->extra_data_size);
+@@ -1745,6 +1749,33 @@ gst_rmdemux_parse_mdpr (GstRMDemux * rmdemux, const guint8 * data, int length)
+           stream->rate, stream->framerate_numerator,
+           stream->framerate_denominator, stream->subformat, stream->format,
+           stream->extra_data_size);
++      offset += 34;
++      GST_INFO_OBJECT (rmdemux, "stream->subformat=0x%x length=%d offset=%d", stream->subformat, length, offset);
++      if (stream->fourcc == GST_RM_VDO_RV30) {
++        guint32 index = 0;
++        guint8 val = 0;
++
++        memset (stream->rpr_size_array, 0, MAX_RPR_SIZE);
++        stream->rpr_size = (stream->subformat & 0x00070000) >> 16;
++  
++        GST_INFO_OBJECT (rmdemux, "stream->rpr_size=%d", stream->rpr_size);
++        for (; index < stream->rpr_size; ++index) {
++          val = GST_READ_UINT8 (data + offset);
++          GST_INFO_OBJECT (rmdemux, "val=%d(0x%x)", val, val);
++          stream->rpr_size_array[2 * index + 2] = (guint32)(val << 2);
++
++          val = GST_READ_UINT8 (data + offset + 1);
++          GST_INFO_OBJECT (rmdemux, "val=%d(0x%x)", val, val);
++          stream->rpr_size_array[2 * index + 3] = (guint32)(val << 2);
++          offset += 2;
++        }
++
++        stream->rpr_size_array[0] = stream->width;
++        stream->rpr_size_array[1] = stream->height;
++        ++(stream->rpr_size);
++
++        GST_INFO_OBJECT (rmdemux, "offset=%d", offset);
++      }
+       break;
+     case GST_RMDEMUX_STREAM_AUDIO:{
+       stream->version = RMDEMUX_GUINT16_GET (data + offset + 4);
+@@ -2324,6 +2355,8 @@ gst_rmdemux_parse_video_packet (GstRMDemux * rmdemux, GstRMDemuxStream * stream,
+       guint8 *outdata;
+       guint header_size;
+       gint i, avail;
++      gsize alloc_size;
++      gsize rv30_header_size;
+ 
+       /* calculate header size, which is:
+        * 1 byte for the number of fragments - 1
+@@ -2343,7 +2376,13 @@ gst_rmdemux_parse_video_packet (GstRMDemux * rmdemux, GstRMDemuxStream * stream,
+ 
+       avail = gst_adapter_available (stream->adapter);
+ 
+-      out = gst_buffer_new_and_alloc (header_size + avail);
++      alloc_size = header_size + avail;
++      if (stream->fourcc == GST_RM_VDO_RV30) {
++        rv30_header_size = stream->rpr_size * 16 + 1;
++        alloc_size += rv30_header_size;
++      }
++      out = gst_buffer_new_and_alloc (alloc_size);
++
+       gst_buffer_map (out, &outmap, GST_MAP_WRITE);
+       outdata = outmap.data;
+ 
+@@ -2356,6 +2395,34 @@ gst_rmdemux_parse_video_packet (GstRMDemux * rmdemux, GstRMDemuxStream * stream,
+         outdata += 4;
+       }
+ 
++       
++      if (stream->fourcc == GST_RM_VDO_RV30) {
++        guint8 index = 0;
++        guint32 *rpr_size_data = stream->rpr_size_array;
++
++        *outdata = stream->rpr_size;
++        GST_INFO_OBJECT (rmdemux, "outdata=%p *outdata=%d", outdata, *outdata);
++        ++outdata;
++
++        for (index = 0; index < stream->rpr_size; ++index) {
++          GST_WRITE_UINT32_LE (outdata, 0x00000001);
++          outdata += 4;
++          /*width*/
++          GST_WRITE_UINT32_LE (outdata, *rpr_size_data);
++          GST_INFO_OBJECT (rmdemux, "*rpr_size_data=%d", *rpr_size_data);
++          outdata += 4;
++          ++rpr_size_data;
++
++          GST_WRITE_UINT32_LE (outdata, 0x00000001);
++          outdata += 4;
++          /*height*/
++          GST_WRITE_UINT32_LE (outdata, *rpr_size_data);
++          GST_INFO_OBJECT (rmdemux, "*rpr_size_data=%d", *rpr_size_data);
++          outdata += 4;
++          ++rpr_size_data;
++        }
++      }
++
+       /* copy packet data after the header now */
+       gst_adapter_copy (stream->adapter, outdata, 0, avail);
+       gst_adapter_flush (stream->adapter, avail);
+@@ -2377,7 +2444,7 @@ gst_rmdemux_parse_video_packet (GstRMDemux * rmdemux, GstRMDemuxStream * stream,
+ 
+       /* video has DTS */
+       GST_BUFFER_DTS (out) = timestamp;
+-      GST_BUFFER_PTS (out) = GST_CLOCK_TIME_NONE;
++      GST_BUFFER_PTS (out) = timestamp;
+ 
+       GST_LOG_OBJECT (rmdemux, "pushing timestamp %" GST_TIME_FORMAT,
+           GST_TIME_ARGS (timestamp));
+-- 
+1.9.1
+

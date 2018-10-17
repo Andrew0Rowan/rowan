@@ -1,0 +1,97 @@
+From 8fa71783ad748be583cab9e99965ac7ae0436e33 Mon Sep 17 00:00:00 2001
+From: Ricky Zhang <ricky.zhang@mediatek.com>
+Date: Mon, 4 Dec 2017 15:00:55 +0800
+Subject: [PATCH] v4l2src: support mplane capture device
+
+add v4l2src support mplane capture device. When get caps from driver,
+if driver return mplane, we should set v4l2src buf type as mplane for
+v4l2src buf init as single plane.
+Test: test ok
+
+Signed-off-by: Ricky Zhang <ricky.zhang@mediatek.com>
+CR-Id: AUTO00012426
+---
+ sys/v4l2/gstv4l2object.c | 8 ++++++--
+ sys/v4l2/gstv4l2src.c    | 1 +
+ sys/v4l2/v4l2_calls.c    | 6 +++++-
+ 3 files changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/sys/v4l2/gstv4l2object.c b/sys/v4l2/gstv4l2object.c
+index d0e94bb..8e14f7e 100644
+--- a/sys/v4l2/gstv4l2object.c
++++ b/sys/v4l2/gstv4l2object.c
+@@ -1675,6 +1675,7 @@ gst_v4l2_object_get_caps_info (GstV4l2Object * v4l2object, GstCaps * caps,
+   guint32 fourcc = 0, fourcc_nc = 0;
+   const gchar *mimetype;
+   struct v4l2_fmtdesc *fmt = NULL;
++  gboolean prefered_non_contiguous = TRUE;;
+ 
+   structure = gst_caps_get_structure (caps, 0);
+ 
+@@ -1767,6 +1768,8 @@ gst_v4l2_object_get_caps_info (GstV4l2Object * v4l2object, GstCaps * caps,
+         break;
+       case GST_VIDEO_FORMAT_GRAY16_BE:
+         fourcc = V4L2_PIX_FMT_Y16_BE;
++      case GST_VIDEO_FORMAT_MT21:
++	fourcc = V4L2_PIX_FMT_MT21;
+         break;
+       default:
+         break;
+@@ -1872,7 +1875,7 @@ gst_v4l2_object_get_caps_info (GstV4l2Object * v4l2object, GstCaps * caps,
+     }
+   }
+ 
+-
++  prefered_non_contiguous = v4l2object->prefered_non_contiguous;
+   /* Prefer the non-contiguous if supported */
+   v4l2object->prefered_non_contiguous = TRUE;
+ 
+@@ -1883,7 +1886,8 @@ gst_v4l2_object_get_caps_info (GstV4l2Object * v4l2object, GstCaps * caps,
+ 
+   if (fmt == NULL) {
+     fmt = gst_v4l2_object_get_format_from_fourcc (v4l2object, fourcc);
+-    v4l2object->prefered_non_contiguous = FALSE;
++    if (!prefered_non_contiguous)
++      v4l2object->prefered_non_contiguous = FALSE;
+   }
+ 
+   if (fmt == NULL)
+diff --git a/sys/v4l2/gstv4l2src.c b/sys/v4l2/gstv4l2src.c
+index 7b06554..7de4ba8 100644
+--- a/sys/v4l2/gstv4l2src.c
++++ b/sys/v4l2/gstv4l2src.c
+@@ -199,6 +199,7 @@ gst_v4l2src_init (GstV4l2Src * v4l2src)
+   v4l2src->v4l2object = gst_v4l2_object_new (GST_ELEMENT (v4l2src),
+       V4L2_BUF_TYPE_VIDEO_CAPTURE, DEFAULT_PROP_DEVICE,
+       gst_v4l2_get_input, gst_v4l2_set_input, NULL);
++  v4l2src->v4l2object->prefered_non_contiguous = TRUE;
+ 
+   gst_base_src_set_format (GST_BASE_SRC (v4l2src), GST_FORMAT_TIME);
+   gst_base_src_set_live (GST_BASE_SRC (v4l2src), TRUE);
+diff --git a/sys/v4l2/v4l2_calls.c b/sys/v4l2/v4l2_calls.c
+index 37f7a61..cb67d52 100644
+--- a/sys/v4l2/v4l2_calls.c
++++ b/sys/v4l2/v4l2_calls.c
+@@ -569,7 +569,8 @@ retry:
+         V4L2_CAP_VIDEO_CAPTURE_MPLANE flag*/
+ 
+   if (GST_IS_V4L2SRC (v4l2object->element) &&
+-      !(v4l2object->vcap.capabilities & (V4L2_CAP_VIDEO_CAPTURE))) {
++      !(v4l2object->vcap.capabilities & (V4L2_CAP_VIDEO_CAPTURE
++           | V4L2_CAP_VIDEO_CAPTURE_MPLANE))) {
+         ret = gst_v4l2_iterator_next (it);
+       if (ret) {
+         v4l2object->videodev = it->device_path;
+@@ -613,6 +614,9 @@ retry:
+       "Opened device '%s' (%s) successfully",
+       v4l2object->vcap.card, v4l2object->videodev);
+ 
++  if (v4l2object->vcap.capabilities & V4L2_CAP_VIDEO_CAPTURE_MPLANE)
++    v4l2object->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
++
+   if (v4l2object->extra_controls)
+     gst_v4l2_set_controls (v4l2object, v4l2object->extra_controls);
+ 
+-- 
+1.9.1
+

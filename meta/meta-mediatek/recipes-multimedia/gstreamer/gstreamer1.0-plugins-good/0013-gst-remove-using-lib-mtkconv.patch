@@ -1,0 +1,75 @@
+From 954a729cdc781f90bd742073d05ca44ae2ed3303 Mon Sep 17 00:00:00 2001
+From: Changtao Hu <changtao.hu@mediatek.com>
+Date: Thu, 18 Jan 2018 17:03:53 +0800
+Subject: [PATCH] gst: remove using lib mtkconv
+
+remove using lib mtkconv
+Test: OK
+
+Signed-off-by: Changtao Hu <changtao.hu@mediatek.com>
+CR-Id: AUTO00013575
+---
+ sys/v4l2/gstv4l2bufferpool.c | 29 +----------------------------
+ 1 file changed, 1 insertion(+), 28 deletions(-)
+
+diff --git a/sys/v4l2/gstv4l2bufferpool.c b/sys/v4l2/gstv4l2bufferpool.c
+index 135d12b..690feb3 100644
+--- a/sys/v4l2/gstv4l2bufferpool.c
++++ b/sys/v4l2/gstv4l2bufferpool.c
+@@ -46,7 +46,6 @@
+ #include "gst/gst-i18n-plugin.h"
+ #include <gst/glib-compat-private.h>
+ 
+-#include "libmtkconv.h"
+ 
+ GST_DEBUG_CATEGORY_STATIC (v4l2bufferpool_debug);
+ GST_DEBUG_CATEGORY_STATIC (CAT_PERFORMANCE);
+@@ -1839,27 +1838,10 @@ gst_v4l2_buffer_pool_process (GstV4l2BufferPool * pool, GstBuffer ** buf)
+                   goto done;
+               }
+ 
+-#ifdef GST_V4L2_DECODER_OUTPUT_DEBUG
+-              if (pix_fmt->pixelformat == V4L2_PIX_FMT_MT21)
+-              {
+-                copy = gst_buffer_new_allocate (NULL, obj->info.size, NULL);
+-                ret = gst_v4l2_buffer_tran_buffer(copy, *buf, &obj->info);
+-                if (ret != GST_FLOW_OK)
+-                  gst_buffer_replace (&copy, NULL);
+-              }
+-              else
+-              {
+-                /* copy the buffer */
+-                copy = gst_buffer_copy_region (*buf,
+-                    GST_BUFFER_COPY_ALL | GST_BUFFER_COPY_DEEP, 0, -1);
+-                GST_LOG_OBJECT (pool, "copy buffer %p->%p", *buf, copy);
+-              }
+-
+-#else
+               copy = gst_buffer_copy_region (*buf,
+                     GST_BUFFER_COPY_ALL | GST_BUFFER_COPY_DEEP, 0, -1);
+               GST_LOG_OBJECT (pool, "copy buffer %p->%p", *buf, copy);
+-#endif
++
+               /* and requeue so that we can continue capturing */
+               gst_buffer_unref (*buf);
+               *buf = copy;
+@@ -1887,16 +1869,7 @@ gst_v4l2_buffer_pool_process (GstV4l2BufferPool * pool, GstBuffer ** buf)
+               goto eos;
+           }
+           
+-#ifdef GST_V4L2_DECODER_OUTPUT_DEBUG
+-          if (pix_fmt->pixelformat == V4L2_PIX_FMT_MT21)
+-          {
+-            ret = gst_v4l2_buffer_tran_buffer(*buf, tmp, &obj->info);
+-          }
+-          else
+-            ret = gst_v4l2_buffer_pool_copy_buffer (pool, *buf, tmp);
+-#else
+           ret = gst_v4l2_buffer_pool_copy_buffer (pool, *buf, tmp);
+-#endif
+ 
+           GST_BUFFER_TIMESTAMP(*buf) = GST_BUFFER_TIMESTAMP(tmp);
+ 
+-- 
+1.9.1
+

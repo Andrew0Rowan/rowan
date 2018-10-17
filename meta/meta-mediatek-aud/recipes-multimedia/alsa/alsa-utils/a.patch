@@ -1,0 +1,35 @@
+diff --git a/Makefile.am b/Makefile.am
+index 5013eb8..a21b526 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -7,29 +7,11 @@ endif
+ if HAVE_MIXER
+ SUBDIRS += amixer
+ endif
+-if HAVE_RAWMIDI
+-SUBDIRS += amidi
+-endif
+ if ALSACONF
+ SUBDIRS += alsaconf
+ endif
+ if HAVE_PCM
+-SUBDIRS += aplay iecset speaker-test
+-if ALSALOOP
+-SUBDIRS += alsaloop
+-endif
+-if BAT
+-SUBDIRS += bat
+-endif
+-endif
+-if HAVE_SEQ
+-SUBDIRS += seq
+-endif
+-if HAVE_UCM
+-SUBDIRS += alsaucm
+-endif
+-if HAVE_TOPOLOGY
+-SUBDIRS += topology
++SUBDIRS += aplay
+ endif
+ 
+ EXTRA_DIST= config.rpath  TODO gitcompile

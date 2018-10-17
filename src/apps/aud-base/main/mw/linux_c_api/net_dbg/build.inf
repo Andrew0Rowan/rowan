@@ -1,0 +1,7 @@
+[build_linux_ko]
+TARGETNAME = netdbg
+TARGETTYPE = module
+
+SOURCES = \
+         netdbg.c \
+         

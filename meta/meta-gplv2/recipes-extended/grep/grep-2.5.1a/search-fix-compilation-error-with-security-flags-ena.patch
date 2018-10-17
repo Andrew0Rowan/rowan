@@ -1,0 +1,134 @@
+From cc5ffe68438bef47c2313705afc0101eba640092 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Andr=C3=A9=20Draszik?= <adraszik@tycoint.com>
+Date: Thu, 23 Mar 2017 12:42:38 +0000
+Subject: [PATCH] search: fix compilation error with security flags enabled
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+| ../../grep-2.5.1a/src/search.c: In function 'dfaerror':
+| ../../grep-2.5.1a/src/search.c:106:3: error: format not a string literal and no format arguments [-Werror=format-security]
+|    error (2, 0, mesg);
+|    ^~~~~
+
+Upstream-Status: Inappropriate [required for grep 2.5.1a (GPLv2) recipe only]
+Signed-off-by: André Draszik <adraszik@tycoint.com>
+---
+ src/search.c | 26 +++++++++++++-------------
+ 1 file changed, 13 insertions(+), 13 deletions(-)
+
+diff --git a/src/search.c b/src/search.c
+index 3c6a485..9cee0d8 100644
+--- a/src/search.c
++++ b/src/search.c
+@@ -103,7 +103,7 @@ check_utf8 (void)
+ void
+ dfaerror (char const *mesg)
+ {
+-  error (2, 0, mesg);
++  error (2, 0, "%s", mesg);
+ }
+ 
+ static void
+@@ -142,7 +142,7 @@ kwsmusts (void)
+ 	    continue;
+ 	  ++kwset_exact_matches;
+ 	  if ((err = kwsincr (kwset, dm->must, strlen (dm->must))) != 0)
+-	    error (2, 0, err);
++	    error (2, 0, "%s", err);
+ 	}
+       /* Now, we compile the substrings that will require
+ 	 the use of the regexp matcher.  */
+@@ -151,10 +151,10 @@ kwsmusts (void)
+ 	  if (dm->exact)
+ 	    continue;
+ 	  if ((err = kwsincr (kwset, dm->must, strlen (dm->must))) != 0)
+-	    error (2, 0, err);
++	    error (2, 0, "%s", err);
+ 	}
+       if ((err = kwsprep (kwset)) != 0)
+-	error (2, 0, err);
++	error (2, 0, "%s", err);
+     }
+ }
+ 
+@@ -198,7 +198,7 @@ Gcompile (char const *pattern, size_t size)
+ 
+       if ((err = re_compile_pattern (motif, len,
+ 				    &(patterns[pcount].regexbuf))) != 0)
+-	error (2, 0, err);
++	error (2, 0, "%s", err);
+       pcount++;
+ 
+       motif = sep;
+@@ -286,7 +286,7 @@ Ecompile (char const *pattern, size_t size)
+ 
+       if ((err = re_compile_pattern (motif, len,
+ 				    &(patterns[pcount].regexbuf))) != 0)
+-	error (2, 0, err);
++	error (2, 0, "%s", err);
+       pcount++;
+ 
+       motif = sep;
+@@ -755,7 +755,7 @@ fimb_fail:
+ 	      if (wclen == 0)
+ 		{
+ 		  if ((err = kwsincr (fimb_kwset, "", 0)) != 0)
+-		    error (2, 0, err);
++		    error (2, 0, "%s", err);
+ 		}
+ 	      else
+ 		for (i = 0; i < (1 << wclen); i++)
+@@ -778,7 +778,7 @@ fimb_fail:
+ 			p += k;
+ 		      }
+ 		    if ((err = kwsincr (fimb_kwset, starts, p - starts)) != 0)
+-		      error (2, 0, err);
++		      error (2, 0, "%s", err);
+ 		  }
+ 	      if (wclim < wcpattern + wcsize)
+ 		++wclim;
+@@ -790,7 +790,7 @@ fimb_fail:
+ 	  free (starts);
+ 	  Fimb.match = xmalloc (Fimb.count);
+ 	  if ((err = kwsprep (kwset)) != 0)
+-	    error (2, 0, err);
++	    error (2, 0, "%s", err);
+ 	  return;
+ 	}
+     }
+@@ -804,7 +804,7 @@ fimb_fail:
+       for (lim = beg; lim < pattern + size && *lim != '\n'; ++lim)
+ 	;
+       if ((err = kwsincr (kwset, beg, lim - beg)) != 0)
+-	error (2, 0, err);
++	error (2, 0, "%s", err);
+       if (lim < pattern + size)
+ 	++lim;
+       beg = lim;
+@@ -812,7 +812,7 @@ fimb_fail:
+   while (beg < pattern + size);
+ 
+   if ((err = kwsprep (kwset)) != 0)
+-    error (2, 0, err);
++    error (2, 0, "%s", err);
+ }
+ 
+ #ifdef MBS_SUPPORT
+@@ -1220,11 +1220,11 @@ Pcompile (char const *pattern, size_t size)
+ 
+   cre = pcre_compile (re, flags, &ep, &e, pcre_maketables ());
+   if (!cre)
+-    error (2, 0, ep);
++    error (2, 0, "%s", ep);
+ 
+   extra = pcre_study (cre, 0, &ep);
+   if (ep)
+-    error (2, 0, ep);
++    error (2, 0, "%s", ep);
+ 
+   free (re);
+ #endif
+-- 
+2.11.0
+

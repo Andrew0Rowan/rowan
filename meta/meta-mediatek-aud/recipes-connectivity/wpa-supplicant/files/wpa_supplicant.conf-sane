@@ -1,0 +1,8 @@
+ctrl_interface=/tmp/wpa_supplicant
+update_config=1
+#network={
+#     ssid="qlyf"
+#     psk="11111111"
+#     key_mgmt=WPA-PSK
+#     priority=100
+#}

@@ -1,0 +1,288 @@
+#ifndef __MT_OCP_API_H
+#define __MT_OCP_API_H
+
+/**
+ * @file    mt_ocp_api.h
+ * @brief   Driver header for Over Current Protect
+ *
+ */
+#include <debug.h>
+#include <mmio.h>
+
+/*
+ * BIT Operation
+ */
+#undef  BIT
+#define BIT(_bit_)                    (unsigned)(1 << (_bit_))
+#define BITS(_bits_, _val_)           ((((unsigned) -1 >> (31 - ((1) ? _bits_))) & ~((1U << ((0) ? _bits_)) - 1)) & ((_val_)<<((0) ? _bits_)))
+#define BITMASK(_bits_)               (((unsigned) -1 >> (31 - ((1) ? _bits_))) & ~((1U << ((0) ? _bits_)) - 1))
+#define GET_BITS_VAL(_bits_, _val_)   (((_val_) & (BITMASK(_bits_))) >> ((0) ? _bits_))
+
+/**
+ * Read/Write a field of a register.
+ * @addr:       Address of the register
+ * @range:      The field bit range in the form of MSB:LSB
+ * @val:        The value to be written to the field
+ */
+#define ocp_read(addr)				mmio_read_32(addr)
+#define ocp_read_field(addr, range)		GET_BITS_VAL(range, ocp_read(addr))
+#define ocp_write(addr, val)			mmio_write_32(addr, val)
+#define ocp_write_field(addr, range, val)	ocp_write(addr, (ocp_read(addr) & ~(BITMASK(range))) | BITS(range, val))
+
+/* LOG */
+#define OCP_DEBUG_LOG_ON	1
+#define TAG	"[OCP]"
+#define ocp_err(fmt, ...)	ERROR(TAG""fmt, __VA_ARGS__)
+#define ocp_warn(fmt, ...)	WARN(TAG""fmt, __VA_ARGS__)
+#define ocp_info(fmt,...)	INFO(TAG""fmt, __VA_ARGS__)
+#if OCP_DEBUG_LOG_ON
+#define ocp_dbg(...)		ocp_info(__VA_ARGS__)
+#else
+#define ocp_dbg(...)
+#endif
+
+
+/* enum */
+enum ocp_unit {
+	OCP_MA = 0,
+	OCP_MW,
+
+	NR_OCP_UNIT,
+};
+
+enum ocp_cluster {
+	OCP_LL = 0,
+	OCP_L,
+	OCP_B,
+
+	NR_OCP_CLUSTER,
+};
+
+enum ocp_clk_div {
+	CLK_DISABLE = 0,
+	CLK_DIV_4 = 2,
+	CLK_DIV_8,
+	CLK_DIV_16,
+};
+
+enum ocp_int_select {
+	IRQ_CLK_PCT_MIN = 0,
+	IRQ_WA_MAX,
+	IRQ_WA_MIN,
+};
+
+enum ocp_value_select {
+	CLK_AVG = 0,
+	WA_AVG,
+	TOTAL_LKG,
+	TOP_RAW_LKG,
+	CPU0_RAW_LKG,
+	CPU1_RAW_LKG,
+};
+
+
+#define OCP_CLK_PCT_MIN_BIG	(1250)
+#define OCP_CLK_PCT_MIN_LITTLE	(2500)
+#define OCP_CLK_PCT_MAX		(10000)
+#define OCP_TARGET_MAX		(127000)
+#define OCP_FREQ_PCT_MAX	(12799)
+#define OCP_VOLTAGE_MAX		(7990)
+#define OCP_FRATIO_MAX		(4096)
+#define OCP_AVG_WINDOW_MAX	(7)
+#define OCP_LL_DEFAULT_FREQ_PCT	(7609)  /* 1248M */
+#define OCP_LL_DEFAULT_VOLT	(950)
+#define OCP_L_DEFAULT_FREQ_PCT	(3374)  /* 793M */
+#define OCP_L_DEFAULT_VOLT	(950)
+#define OCP_B_DEFAULT_FREQ_PCT	(3203)  /* 897M */
+#define OCP_B_DEFAULT_VOLT	(950)
+#define OCP_LL_DEFAULT_FRATIO	(1039)
+#define OCP_L_DEFAULT_FRATIO	(725)
+#define OCP_B_DEFAULT_FRATIO	(608)
+#define OCP_DEFAULT_AVG_WINDOW	(0)
+
+
+/* eFuse, TODO: need to check this! */
+#define PTP3_OD0              (0x10206660)
+#define PTP3_OD1              (0x10206664)
+#define PTP3_OD2              (0x10206668)
+#define PTP3_OD3              (0x1020666C)
+
+
+/**
+ * OCP control register
+ */
+#define OCP_REG_BASE_ADDR	LITTLE_OCP_BASE_ADDR
+#define OCP_REG_BANK_SIZE	(0x4000)
+
+/* Big */
+#define BIG_OCP_BASE_ADDR	((unsigned int) 0x10202000)
+
+#define OCPAPBSTATUS00		(BIG_OCP_BASE_ADDR + 0x500)
+#define OCPAPBSTATUS01		(BIG_OCP_BASE_ADDR + 0x504)
+#define OCPAPBSTATUS02		(BIG_OCP_BASE_ADDR + 0x508)
+#define OCPAPBSTATUS03		(BIG_OCP_BASE_ADDR + 0x50C)
+#define OCPAPBSTATUS04		(BIG_OCP_BASE_ADDR + 0x510)
+#define OCPAPBSTATUS05		(BIG_OCP_BASE_ADDR + 0x514)
+#define OCPAPBSTATUS06		(BIG_OCP_BASE_ADDR + 0x518)
+#define OCPAPBSTATUS07		(BIG_OCP_BASE_ADDR + 0x51C)
+#define OCPAPBCFG00		(BIG_OCP_BASE_ADDR + 0x520)
+#define OCPAPBCFG01		(BIG_OCP_BASE_ADDR + 0x524)
+#define OCPAPBCFG02		(BIG_OCP_BASE_ADDR + 0x528)
+#define OCPAPBCFG03		(BIG_OCP_BASE_ADDR + 0x52C)
+#define OCPAPBCFG04		(BIG_OCP_BASE_ADDR + 0x530)
+#define OCPAPBCFG05		(BIG_OCP_BASE_ADDR + 0x534)
+#define OCPAPBCFG06		(BIG_OCP_BASE_ADDR + 0x538)
+#define OCPAPBCFG07		(BIG_OCP_BASE_ADDR + 0x53C)
+#define OCPAPBCFG08		(BIG_OCP_BASE_ADDR + 0x540)
+#define OCPAPBCFG09		(BIG_OCP_BASE_ADDR + 0x544)
+#define OCPAPBCFG10		(BIG_OCP_BASE_ADDR + 0x548)
+#define OCPAPBCFG11		(BIG_OCP_BASE_ADDR + 0x54C)
+#define OCPAPBCFG12		(BIG_OCP_BASE_ADDR + 0x550)
+#define OCPAPBCFG13		(BIG_OCP_BASE_ADDR + 0x554)
+#define OCPAPBCFG14		(BIG_OCP_BASE_ADDR + 0x558)
+#define OCPAPBCFG15		(BIG_OCP_BASE_ADDR + 0x55C)
+#define OCPAPBCFG16		(BIG_OCP_BASE_ADDR + 0x560)
+#define OCPAPBCFG17		(BIG_OCP_BASE_ADDR + 0x564)
+#define OCPAPBCFG18		(BIG_OCP_BASE_ADDR + 0x568)
+#define OCPAPBCFG19		(BIG_OCP_BASE_ADDR + 0x56C)
+#define OCPAPBCFG20		(BIG_OCP_BASE_ADDR + 0x570)
+#define OCPAPBCFG21		(BIG_OCP_BASE_ADDR + 0x574)
+#define OCPAPBCFG22		(BIG_OCP_BASE_ADDR + 0x578)
+#define OCPAPBCFG23		(BIG_OCP_BASE_ADDR + 0x57C)
+
+#define PTP3_OCP_CLK_DIVIDER	(BIG_OCP_BASE_ADDR + 0x740)
+
+
+/* Little */
+#define LITTLE_OCP_BASE_ADDR	((unsigned int) 0x10200000)
+
+#define MP0_OCPCPUPOST_CTRL0	(LITTLE_OCP_BASE_ADDR + 0x1030)
+#define MP0_OCPCPUPOST_CTRL1	(LITTLE_OCP_BASE_ADDR + 0x1034)
+#define MP0_OCPCPUPOST_CTRL2	(LITTLE_OCP_BASE_ADDR + 0x1038)
+#define MP0_OCPCPUPOST_CTRL3	(LITTLE_OCP_BASE_ADDR + 0x103C)
+#define MP0_OCPCPUPOST_CTRL4	(LITTLE_OCP_BASE_ADDR + 0x1040)
+#define MP0_OCPCPUPOST_CTRL5	(LITTLE_OCP_BASE_ADDR + 0x1044)
+#define MP0_OCPCPUPOST_CTRL6	(LITTLE_OCP_BASE_ADDR + 0x1048)
+#define MP0_OCPCPUPOST_CTRL7	(LITTLE_OCP_BASE_ADDR + 0x104C)
+
+#define MP0_OCPNCPUPOST_CTRL	(LITTLE_OCP_BASE_ADDR + 0x1070)
+
+#define MP0_OCPSTATUS0		(LITTLE_OCP_BASE_ADDR + 0x1500)
+#define MP0_OCPSTATUS1		(LITTLE_OCP_BASE_ADDR + 0x1504)
+#define MP0_OCPSTATUS2		(LITTLE_OCP_BASE_ADDR + 0x1508)
+#define MP0_OCPSTATUS3		(LITTLE_OCP_BASE_ADDR + 0x150C)
+#define MP0_OCPSTATUS4		(LITTLE_OCP_BASE_ADDR + 0x1510)
+#define MP0_OCPSTATUS5		(LITTLE_OCP_BASE_ADDR + 0x1514)
+#define MP0_OCPSTATUS6		(LITTLE_OCP_BASE_ADDR + 0x1518)
+#define MP0_OCPSTATUS7		(LITTLE_OCP_BASE_ADDR + 0x151C)
+#define MP0_OCPAPBCFG00		(LITTLE_OCP_BASE_ADDR + 0x1520)
+#define MP0_OCPAPBCFG01		(LITTLE_OCP_BASE_ADDR + 0x1524)
+#define MP0_OCPAPBCFG02		(LITTLE_OCP_BASE_ADDR + 0x1528)
+#define MP0_OCPAPBCFG03		(LITTLE_OCP_BASE_ADDR + 0x152C)
+#define MP0_OCPAPBCFG04		(LITTLE_OCP_BASE_ADDR + 0x1530)
+#define MP0_OCPAPBCFG05		(LITTLE_OCP_BASE_ADDR + 0x1534)
+#define MP0_OCPAPBCFG06		(LITTLE_OCP_BASE_ADDR + 0x1538)
+#define MP0_OCPAPBCFG07		(LITTLE_OCP_BASE_ADDR + 0x153C)
+#define MP0_OCPAPBCFG08		(LITTLE_OCP_BASE_ADDR + 0x1540)
+#define MP0_OCPAPBCFG09		(LITTLE_OCP_BASE_ADDR + 0x1544)
+#define MP0_OCPAPBCFG10		(LITTLE_OCP_BASE_ADDR + 0x1548)
+#define MP0_OCPAPBCFG11		(LITTLE_OCP_BASE_ADDR + 0x154C)
+#define MP0_OCPAPBCFG12		(LITTLE_OCP_BASE_ADDR + 0x1550)
+#define MP0_OCPAPBCFG13		(LITTLE_OCP_BASE_ADDR + 0x1554)
+#define MP0_OCPAPBCFG14		(LITTLE_OCP_BASE_ADDR + 0x1558)
+#define MP0_OCPAPBCFG15		(LITTLE_OCP_BASE_ADDR + 0x155C)
+#define MP0_OCPAPBCFG16		(LITTLE_OCP_BASE_ADDR + 0x1560)
+#define MP0_OCPAPBCFG17		(LITTLE_OCP_BASE_ADDR + 0x1564)
+#define MP0_OCPAPBCFG18		(LITTLE_OCP_BASE_ADDR + 0x1568)
+#define MP0_OCPAPBCFG19		(LITTLE_OCP_BASE_ADDR + 0x156C)
+#define MP0_OCPAPBCFG20		(LITTLE_OCP_BASE_ADDR + 0x1570)
+#define MP0_OCPAPBCFG21		(LITTLE_OCP_BASE_ADDR + 0x1574)
+#define MP0_OCPAPBCFG22		(LITTLE_OCP_BASE_ADDR + 0x1578)
+#define MP0_OCPAPBCFG23		(LITTLE_OCP_BASE_ADDR + 0x157C)
+#define MP0_OCPAPBCFG24		(LITTLE_OCP_BASE_ADDR + 0x1580)
+#define MP0_OCPAPBCFG25		(LITTLE_OCP_BASE_ADDR + 0x1584)
+#define MP0_OCPAPBCFG26		(LITTLE_OCP_BASE_ADDR + 0x1588)
+#define MP0_OCPAPBCFG27		(LITTLE_OCP_BASE_ADDR + 0x158C)
+#define MP0_OCPAPBCFG28		(LITTLE_OCP_BASE_ADDR + 0x1590)
+#define MP0_OCPAPBCFG29		(LITTLE_OCP_BASE_ADDR + 0x1594)
+#define MP0_OCPAPBCFG30		(LITTLE_OCP_BASE_ADDR + 0x1598)
+#define MP0_OCPAPBCFG31		(LITTLE_OCP_BASE_ADDR + 0x159C)
+#define MP0_OCPAPBCFG32		(LITTLE_OCP_BASE_ADDR + 0x15A0)
+#define MP0_OCPAPBCFG33		(LITTLE_OCP_BASE_ADDR + 0x15A4)
+#define MP0_OCPAPBCFG34		(LITTLE_OCP_BASE_ADDR + 0x15A8)
+
+#define MP0_OCP_GENERAL_CTRL	(LITTLE_OCP_BASE_ADDR + 0x17FC)
+
+#define MP1_OCPCPUPOST_CTRL0	(LITTLE_OCP_BASE_ADDR + 0x3030)
+#define MP1_OCPCPUPOST_CTRL1	(LITTLE_OCP_BASE_ADDR + 0x3034)
+#define MP1_OCPCPUPOST_CTRL2	(LITTLE_OCP_BASE_ADDR + 0x3038)
+#define MP1_OCPCPUPOST_CTRL3	(LITTLE_OCP_BASE_ADDR + 0x303C)
+#define MP1_OCPCPUPOST_CTRL4	(LITTLE_OCP_BASE_ADDR + 0x3040)
+#define MP1_OCPCPUPOST_CTRL5	(LITTLE_OCP_BASE_ADDR + 0x3044)
+#define MP1_OCPCPUPOST_CTRL6	(LITTLE_OCP_BASE_ADDR + 0x3048)
+#define MP1_OCPCPUPOST_CTRL7	(LITTLE_OCP_BASE_ADDR + 0x304C)
+
+#define MP1_OCPNCPUPOST_CTRL	(LITTLE_OCP_BASE_ADDR + 0x3070)
+
+#define MP1_OCPSTATUS0		(LITTLE_OCP_BASE_ADDR + 0x3500)
+#define MP1_OCPSTATUS1		(LITTLE_OCP_BASE_ADDR + 0x3504)
+#define MP1_OCPSTATUS2		(LITTLE_OCP_BASE_ADDR + 0x3508)
+#define MP1_OCPSTATUS3		(LITTLE_OCP_BASE_ADDR + 0x350C)
+#define MP1_OCPSTATUS4		(LITTLE_OCP_BASE_ADDR + 0x3510)
+#define MP1_OCPSTATUS5		(LITTLE_OCP_BASE_ADDR + 0x3514)
+#define MP1_OCPSTATUS6		(LITTLE_OCP_BASE_ADDR + 0x3518)
+#define MP1_OCPSTATUS7		(LITTLE_OCP_BASE_ADDR + 0x351C)
+#define MP1_OCPAPBCFG00		(LITTLE_OCP_BASE_ADDR + 0x3520)
+#define MP1_OCPAPBCFG01		(LITTLE_OCP_BASE_ADDR + 0x3524)
+#define MP1_OCPAPBCFG02		(LITTLE_OCP_BASE_ADDR + 0x3528)
+#define MP1_OCPAPBCFG03		(LITTLE_OCP_BASE_ADDR + 0x352C)
+#define MP1_OCPAPBCFG04		(LITTLE_OCP_BASE_ADDR + 0x3530)
+#define MP1_OCPAPBCFG05		(LITTLE_OCP_BASE_ADDR + 0x3534)
+#define MP1_OCPAPBCFG06		(LITTLE_OCP_BASE_ADDR + 0x3538)
+#define MP1_OCPAPBCFG07		(LITTLE_OCP_BASE_ADDR + 0x353C)
+#define MP1_OCPAPBCFG08		(LITTLE_OCP_BASE_ADDR + 0x3540)
+#define MP1_OCPAPBCFG09		(LITTLE_OCP_BASE_ADDR + 0x3544)
+#define MP1_OCPAPBCFG10		(LITTLE_OCP_BASE_ADDR + 0x3548)
+#define MP1_OCPAPBCFG11		(LITTLE_OCP_BASE_ADDR + 0x354C)
+#define MP1_OCPAPBCFG12		(LITTLE_OCP_BASE_ADDR + 0x3550)
+#define MP1_OCPAPBCFG13		(LITTLE_OCP_BASE_ADDR + 0x3554)
+#define MP1_OCPAPBCFG14		(LITTLE_OCP_BASE_ADDR + 0x3558)
+#define MP1_OCPAPBCFG15		(LITTLE_OCP_BASE_ADDR + 0x355C)
+#define MP1_OCPAPBCFG16		(LITTLE_OCP_BASE_ADDR + 0x3560)
+#define MP1_OCPAPBCFG17		(LITTLE_OCP_BASE_ADDR + 0x3564)
+#define MP1_OCPAPBCFG18		(LITTLE_OCP_BASE_ADDR + 0x3568)
+#define MP1_OCPAPBCFG19		(LITTLE_OCP_BASE_ADDR + 0x356C)
+#define MP1_OCPAPBCFG20		(LITTLE_OCP_BASE_ADDR + 0x3570)
+#define MP1_OCPAPBCFG21		(LITTLE_OCP_BASE_ADDR + 0x3574)
+#define MP1_OCPAPBCFG22		(LITTLE_OCP_BASE_ADDR + 0x3578)
+#define MP1_OCPAPBCFG23		(LITTLE_OCP_BASE_ADDR + 0x357C)
+#define MP1_OCPAPBCFG24		(LITTLE_OCP_BASE_ADDR + 0x3580)
+#define MP1_OCPAPBCFG25		(LITTLE_OCP_BASE_ADDR + 0x3584)
+#define MP1_OCPAPBCFG26		(LITTLE_OCP_BASE_ADDR + 0x3588)
+#define MP1_OCPAPBCFG27		(LITTLE_OCP_BASE_ADDR + 0x358C)
+#define MP1_OCPAPBCFG28		(LITTLE_OCP_BASE_ADDR + 0x3590)
+#define MP1_OCPAPBCFG29		(LITTLE_OCP_BASE_ADDR + 0x3594)
+#define MP1_OCPAPBCFG30		(LITTLE_OCP_BASE_ADDR + 0x3598)
+#define MP1_OCPAPBCFG31		(LITTLE_OCP_BASE_ADDR + 0x359C)
+#define MP1_OCPAPBCFG32		(LITTLE_OCP_BASE_ADDR + 0x35A0)
+#define MP1_OCPAPBCFG33		(LITTLE_OCP_BASE_ADDR + 0x35A4)
+#define MP1_OCPAPBCFG34		(LITTLE_OCP_BASE_ADDR + 0x35A8)
+
+#define MP1_OCP_GENERAL_CTRL	(LITTLE_OCP_BASE_ADDR + 0x37FC)
+
+
+/************************************/
+extern int OCPRegWrite(unsigned int addr, unsigned int val);
+extern int OCPRegRead(unsigned int addr);
+extern int OCPEnDis(enum ocp_cluster cluster, unsigned int enable);
+extern int OCPTarget(enum ocp_cluster cluster, unsigned int target);
+extern int OCPFreqPct(enum ocp_cluster cluster, unsigned int freqpct);
+extern int OCPVoltage(enum ocp_cluster cluster, unsigned int volt);
+extern int OCPIntClr(enum ocp_cluster cluster, int value2, int value1, int value0);
+extern int OCPIntEnDis(enum ocp_cluster cluster, int value2, int value1, int value0);
+extern int OCPIntLimit(enum ocp_cluster cluster, enum ocp_int_select select, int limit);
+extern int OCPLkgMonEnDis(enum ocp_cluster cluster, unsigned int cpu, unsigned int enable);
+/************************************/
+
+#endif /* end of __MT_OCP_API_H */
+

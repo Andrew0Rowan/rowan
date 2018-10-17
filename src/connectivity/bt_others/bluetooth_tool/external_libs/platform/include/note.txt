@@ -1,0 +1,1 @@
+the platform library header files should copy to this folder.

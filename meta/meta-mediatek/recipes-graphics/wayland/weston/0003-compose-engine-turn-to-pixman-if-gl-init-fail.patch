@@ -1,0 +1,45 @@
+From 5e73950d35bd8c405f857c023e0d10539f2f2d87 Mon Sep 17 00:00:00 2001
+From: Nelson Liu <nelson.liu@mediatek.com>
+Date: Thu, 8 Sep 2016 14:45:23 +0800
+Subject: [PATCH 03/19] compose-engine: turn to pixman if gl init fail
+
+if init_gl fail then turn to pixman to compose buffer
+Test: test ok
+
+Change-Id: Ic220ad8496f73944a2b53d3410f337f2d001aaf1
+Signed-off-by: Nelson Liu <nelson.liu@mediatek.com>
+CR-Id: AUTO00000252
+---
+ src/compositor-drm.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/src/compositor-drm.c b/src/compositor-drm.c
+index 893877d..2016232 100644
+--- a/src/compositor-drm.c
++++ b/src/compositor-drm.c
+@@ -1599,6 +1599,7 @@ init_egl(struct drm_backend *b)
+ 
+ 	if (drm_backend_create_gl_renderer(b) < 0) {
+ 		gbm_device_destroy(b->gbm);
++		b->gbm = NULL;
+ 		return -1;
+ 	}
+ 
+@@ -3105,8 +3106,12 @@ drm_backend_create(struct weston_compositor *compositor,
+ 		}
+ 	} else {
+ 		if (init_egl(b) < 0) {
+-			weston_log("failed to initialize egl\n");
+-			goto err_udev_dev;
++			weston_log("failed to initialize egl, use pixman\n");
++			if (init_pixman(b) < 0) {
++				weston_log("failed to initialize pixman renderer\n");
++				goto err_udev_dev;
++			}
++			b->use_pixman = 1;
+ 		}
+ 	}
+ 
+-- 
+1.9.1
+

@@ -1,0 +1,11 @@
+NAME = file_op
+LIB = lib$(NAME).a lib$(NAME).so
+INSTALL = 
+UNINSTALL = 
+
+include $(PREFIX)/Makefile.prebuilt.template
+
+
+all:
+
+

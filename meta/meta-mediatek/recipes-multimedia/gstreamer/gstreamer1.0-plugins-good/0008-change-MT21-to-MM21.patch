@@ -1,0 +1,33 @@
+From 5c9284cb1163643c60c05e95496a3ab2cc41f210 Mon Sep 17 00:00:00 2001
+From: Changtao Hu <changtao.hu@mediatek.com>
+Date: Fri, 8 Sep 2017 06:00:40 +0800
+Subject: [PATCH] gst: good plugin
+
+change mtk video block format
+Test: OK
+
+Signed-off-by: Changtao Hu <changtao.hu@mediatek.com>
+CR-Id: AUTO00006970
+---
+ sys/v4l2/ext/videodev2.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+ mode change 100755 => 100644 sys/v4l2/ext/videodev2.h
+
+diff --git a/sys/v4l2/ext/videodev2.h b/sys/v4l2/ext/videodev2.h
+old mode 100755
+new mode 100644
+index 9a9bcd0..991d81b
+--- a/sys/v4l2/ext/videodev2.h
++++ b/sys/v4l2/ext/videodev2.h
+@@ -525,7 +525,7 @@ struct v4l2_pix_format {
+ #define V4L2_PIX_FMT_NV61M   v4l2_fourcc('N', 'M', '6', '1') /* 16  Y/CrCb 4:2:2  */
+ #define V4L2_PIX_FMT_NV12MT  v4l2_fourcc('T', 'M', '1', '2') /* 12  Y/CbCr 4:2:0 64x32 macroblocks */
+ #define V4L2_PIX_FMT_NV12MT_16X16 v4l2_fourcc('V', 'M', '1', '2') /* 12  Y/CbCr 4:2:0 16x16 macroblocks */
+-#define V4L2_PIX_FMT_MT21    v4l2_fourcc('M', 'T', '2', '1')
++#define V4L2_PIX_FMT_MT21    v4l2_fourcc('M', 'M', '2', '1')
+ 
+ /* three non contiguous planes - Y, Cb, Cr */
+ #define V4L2_PIX_FMT_YUV420M v4l2_fourcc('Y', 'M', '1', '2') /* 12  YUV420 planar */
+-- 
+1.9.1
+

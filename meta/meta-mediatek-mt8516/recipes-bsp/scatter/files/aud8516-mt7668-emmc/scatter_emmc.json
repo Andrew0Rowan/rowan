@@ -1,0 +1,119 @@
+{
+    "MTK_PLATFORM_CFG": {
+	"config_version": "V1.1.2",
+	"platform": "MT8516",
+	"project": "aud8516-emmc",
+	"storage": "EMMC",
+	"boot_channel": "MSDC_0",
+	"block_size": "0x20000",
+	"skip_pmt_operate": true
+    },
+    "PRELOADER": {
+	"boundary_check": true,
+	"is_download": true,
+	"file_name": "preloader.bin",
+	"is_reserved": false,
+	"partition_name": "PRELOADER",
+	"partition_size": 262144,
+	"physical_start_addr": 0,
+	"linear_start_addr": 0,
+	"region": "EMMC_BOOT_1",
+	"storage": "HW_STORAGE_EMMC",
+	"operation_type": "BOOTLOADERS",
+	"type": "SV5_BL_BIN",
+	"reserve": 0
+    },
+    "MBR": {
+	"boundary_check": true,
+	"is_download": true,
+	"file_name": "MBR",
+	"is_reserved": false,
+	"partition_name": "MBR",
+	"partition_size": 524288,
+	"physical_start_addr": 0,
+	"linear_start_addr": 0,
+	"region": "EMMC_USER",
+	"storage": "HW_STORAGE_EMMC",
+	"operation_type": "UPDATE",
+	"type": "NORMAL_ROM",
+	"reserve": 0
+    },
+    "NVRAM": {
+	"operation_type": "INVISIBLE"
+    },
+    "SEC_RO": {
+	"operation_type": "INVISIBLE"
+    },
+    "MISC": {
+	"operation_type": "INVISIBLE"
+    },
+    "UBOOT": {
+	"file_name": "lk.bin"
+    },
+    "BOOTIMG1": {
+	"boundary_check": true,
+	"is_download": true,
+	"file_name": "boot.img",
+	"is_reserved": false,
+	"partition_name": "BOOTIMG1",
+	"region": "EMMC_USER",
+	"storage": "HW_STORAGE_EMMC",
+	"operation_type": "UPDATE",
+	"type": "NORMAL_ROM",
+	"reserve": 0
+    },
+    "BOOTIMG2": {
+	"boundary_check": true,
+	"is_download": true,
+	"file_name": "boot.img",
+	"is_reserved": false,
+	"partition_name": "BOOTIMG2",
+	"region": "EMMC_USER",
+	"storage": "HW_STORAGE_EMMC",
+	"operation_type": "UPDATE",
+	"type": "NORMAL_ROM",
+	"reserve": 0
+    },
+    "TEE1": {
+	"file_name": "tz.img"
+    },
+    "TEE2": {
+	"file_name": "tz.img"
+    },
+    "ROOTFS1": {
+	"boundary_check": true,
+	"is_download": true,
+	"file_name": "rootfs.ext4",
+	"is_reserved": false,
+	"partition_name": "ROOTFS1",
+	"region": "EMMC_USER",
+	"storage": "HW_STORAGE_EMMC",
+	"operation_type": "UPDATE",
+	"type": "NORMAL_ROM",
+	"reserve": 0
+    },
+    "ROOTFS2": {
+	"boundary_check": true,
+	"is_download": true,
+	"file_name": "rootfs.ext4",
+	"is_reserved": false,
+	"partition_name": "ROOTFS2",
+	"region": "EMMC_USER",
+	"storage": "HW_STORAGE_EMMC",
+	"operation_type": "UPDATE",
+	"type": "NORMAL_ROM",
+	"reserve": 0
+    },
+    "USRDATA": {
+	"boundary_check": true,
+	"is_download": true,
+	"file_name": "userdata.img",
+	"is_reserved": false,
+	"partition_name": "USRDATA",
+	"region": "EMMC_USER",
+	"storage": "HW_STORAGE_EMMC",
+	"operation_type": "UPDATE",
+	"type": "NORMAL_ROM",
+	"reserve": 0
+    },
+}

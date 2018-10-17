@@ -1,0 +1,36 @@
+From 92644bbb75fd52e96bc4c81b9bba3f5e6d20e334 Mon Sep 17 00:00:00 2001
+From: Xiaolei Gao <xiaolei.gao@mediatek.com>
+Date: Tue, 4 Jul 2017 10:41:19 +0800
+Subject: [PATCH] videoinfo: modify I420 format plane offset and size
+
+modify I420 format plane offset and size
+Test: run on 2712 and autotest pass
+
+Signed-off-by: Xiaolei Gao <xiaolei.gao@mediatek.com>
+---
+ gst-libs/gst/video/video-info.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/gst-libs/gst/video/video-info.c b/gst-libs/gst/video/video-info.c
+index 366636e..45296f7 100644
+--- a/gst-libs/gst/video/video-info.c
++++ b/gst-libs/gst/video/video-info.c
+@@ -699,12 +699,12 @@ fill_planes (GstVideoInfo * info)
+       info->stride[1] = GST_ROUND_UP_4 (GST_ROUND_UP_2 (width) / 2);
+       info->stride[2] = info->stride[1];
+       info->offset[0] = 0;
+-      info->offset[1] = info->stride[0] * GST_ROUND_UP_2 (height);
++      info->offset[1] = GST_ROUND_UP_128 (info->stride[0] * GST_ROUND_UP_2 (height));
+       cr_h = GST_ROUND_UP_2 (height) / 2;
+       if (GST_VIDEO_INFO_IS_INTERLACED (info))
+         cr_h = GST_ROUND_UP_2 (cr_h);
+-      info->offset[2] = info->offset[1] + info->stride[1] * cr_h;
+-      info->size = info->offset[2] + info->stride[2] * cr_h;
++      info->offset[2] = info->offset[1] + GST_ROUND_UP_128 (info->stride[1] * cr_h);
++      info->size = info->offset[2] + GST_ROUND_UP_128 (info->stride[2] * cr_h);
+       break;
+     case GST_VIDEO_FORMAT_Y41B:
+       info->stride[0] = GST_ROUND_UP_4 (width);
+-- 
+1.9.1
+

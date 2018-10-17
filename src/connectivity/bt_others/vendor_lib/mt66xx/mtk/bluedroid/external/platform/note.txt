@@ -1,0 +1,2 @@
+this folder include platform chip configuation related header files
+and auto copy from project when compile bluetooth

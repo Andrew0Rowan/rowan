@@ -1,0 +1,71 @@
+From 761b6f1ef862020dc10bc093847fcc1a77a6d05f Mon Sep 17 00:00:00 2001
+From: Ricky Zhang <ricky.zhang@mediatek.com>
+Date: Wed, 15 Nov 2017 10:02:33 +0800
+Subject: [PATCH] video-format: add MT21 and MM21 format
+
+Add MT21 and MM21 format.
+Notice that MT21 fourcc is MM21 and MM21 fourcc is MT21. When you
+add MT21 format for gstreamer, Gstreamer will use MT21 to compare with
+fourcc, it is not correct. So Add special process to handle MT21 and MM21.
+Test: test ok
+
+Signed-off-by: Ricky Zhang <ricky.zhang@mediatek.com>
+CR-Id: AUTO00000556
+---
+ gst-libs/gst/video/video-format.c | 13 ++++++++++++-
+ gst-libs/gst/video/video-format.h |  1 +
+ 2 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/gst-libs/gst/video/video-format.c b/gst-libs/gst/video/video-format.c
+index 3220106..c47fb2b 100644
+--- a/gst-libs/gst/video/video-format.c
++++ b/gst-libs/gst/video/video-format.c
+@@ -3574,7 +3574,9 @@ static const VideoFormat formats[] = {
+       PSTR2222, PLANE0123, OFFS0, SUB4444, PACK_A444_10LE),
+   MAKE_YUV_FORMAT (NV61, "raw video", GST_MAKE_FOURCC ('N', 'V', '6', '1'),
+       DPTH888, PSTR122, PLANE011, OFFS010, SUB422, PACK_NV61),
+-  MAKE_YUV_FORMAT (MT21, "raw video", GST_MAKE_FOURCC ('M', 'T', '2', '1'),
++  MAKE_YUV_FORMAT (MT21, "raw video", GST_MAKE_FOURCC ('M', 'M', '2', '1'),
++      DPTH888, PSTR122, PLANE011, OFFS001, SUB420, PACK_NV12),
++  MAKE_YUV_FORMAT (MM21, "raw video", GST_MAKE_FOURCC ('M', 'T', '2', '1'),
+       DPTH888, PSTR122, PLANE011, OFFS001, SUB420, PACK_NV12),
+ };
+ 
+@@ -3804,6 +3806,10 @@ gst_video_format_from_fourcc (guint32 fourcc)
+       return GST_VIDEO_FORMAT_IYU1;
+     case GST_MAKE_FOURCC ('A', 'Y', '6', '4'):
+       return GST_VIDEO_FORMAT_AYUV64;
++    case GST_MAKE_FOURCC ('M', 'T', '2', '1'):
++      return GST_VIDEO_FORMAT_MM21;
++    case GST_MAKE_FOURCC ('M', 'M', '2', '1'):
++      return GST_VIDEO_FORMAT_MT21;
+     default:
+       return GST_VIDEO_FORMAT_UNKNOWN;
+   }
+@@ -3825,6 +3831,11 @@ gst_video_format_from_string (const gchar * format)
+ 
+   g_return_val_if_fail (format != NULL, GST_VIDEO_FORMAT_UNKNOWN);
+ 
++  if (strcmp("MT21", format) == 0)
++    return GST_VIDEO_FORMAT_MT21;
++  else if (strcmp("MM21", format) == 0)
++    return GST_VIDEO_FORMAT_MM21;
++
+   for (i = 0; i < G_N_ELEMENTS (formats); i++) {
+     if (strcmp (GST_VIDEO_FORMAT_INFO_NAME (&formats[i].info), format) == 0)
+       return GST_VIDEO_FORMAT_INFO_FORMAT (&formats[i].info);
+diff --git a/gst-libs/gst/video/video-format.h b/gst-libs/gst/video/video-format.h
+index a2fd840..dcdb620 100644
+--- a/gst-libs/gst/video/video-format.h
++++ b/gst-libs/gst/video/video-format.h
+@@ -159,6 +159,7 @@ typedef enum {
+   GST_VIDEO_FORMAT_A444_10LE,
+   GST_VIDEO_FORMAT_NV61,
+   GST_VIDEO_FORMAT_MT21,
++  GST_VIDEO_FORMAT_MM21,
+ } GstVideoFormat;
+ 
+ #define GST_VIDEO_MAX_PLANES 4
+-- 
+1.9.1
+

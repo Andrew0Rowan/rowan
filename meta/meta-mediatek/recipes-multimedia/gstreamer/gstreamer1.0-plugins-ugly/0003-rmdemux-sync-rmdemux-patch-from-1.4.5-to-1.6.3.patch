@@ -1,0 +1,139 @@
+From dbfd8cd031cde53e2b10b77216a50056fa8570f8 Mon Sep 17 00:00:00 2001
+From: Xiaolei Gao <xiaolei.gao@mediatek.com>
+Date: Thu, 22 Sep 2016 19:08:49 +0800
+Subject: [PATCH] rmdemux: sync rmdemux patch from 1.4.5 to 1.6.3
+
+1.handler case: Index field and Data field is NULL in rm video
+2.remove ECC packet from RV40/RV30 video
+Test: run on 2701
+
+Signed-off-by: Xiaolei Gao <xiaolei.gao@mediatek.com>
+CR-Id: AUTO00001345
+---
+ gst/realmedia/rmdemux.c | 54 ++++++++++++++++++++++++++++++++++++++++---------
+ 1 file changed, 45 insertions(+), 9 deletions(-)
+
+diff --git a/gst/realmedia/rmdemux.c b/gst/realmedia/rmdemux.c
+index 7b0bc96..e5a69cc 100644
+--- a/gst/realmedia/rmdemux.c
++++ b/gst/realmedia/rmdemux.c
+@@ -92,6 +92,7 @@ struct _GstRMDemuxStream
+   guint frag_length;
+   guint frag_current;
+   guint frag_count;
++  guint ecc_count;
+   guint frag_offset[MAX_FRAGS];
+   GstAdapter *adapter;
+ 
+@@ -1042,7 +1043,18 @@ gst_rmdemux_chain (GstPad * pad, GstObject * parent, GstBuffer * buffer)
+           GST_WARNING_OBJECT (rmdemux, "Bogus looking header, unprintable "
+               "FOURCC");
+           gst_adapter_unmap (rmdemux->adapter);
+-          gst_adapter_flush (rmdemux->adapter, 4);
++          gst_adapter_flush (rmdemux->adapter, avail);
++          
++          if (rmdemux->loop_state == RMDEMUX_LOOP_STATE_INDEX) {
++		rmdemux->state = RMDEMUX_STATE_HEADER;
++		rmdemux->index_offset = 0;
++		GST_WARNING_OBJECT (rmdemux, "xiaolei:index error handlering");
++	   }
++	   if (rmdemux->loop_state == RMDEMUX_LOOP_STATE_DATA) {
++		rmdemux->state = RMDEMUX_STATE_EOS;
++		rmdemux->data_offset = 0;
++		GST_WARNING_OBJECT (rmdemux, "xiaolei:data error handlering");
++	   }
+ 
+           break;
+         }
+@@ -2249,6 +2261,7 @@ gst_rmdemux_parse_video_packet (GstRMDemux * rmdemux, GstRMDemuxStream * stream,
+   GstMapInfo map;
+   const guint8 *data;
+   gsize size;
++  gboolean ecc_flag = FALSE;
+ 
+   gst_buffer_map (in, &map, GST_MAP_READ);
+ 
+@@ -2304,8 +2317,8 @@ gst_rmdemux_parse_video_packet (GstRMDemux * rmdemux, GstRMDemuxStream * stream,
+ 
+     GST_DEBUG_OBJECT (rmdemux,
+         "seq %d, subseq %d, offset %d, length %d, size %" G_GSIZE_FORMAT
+-        ", header %02x", pkg_seqnum, pkg_subseq, pkg_offset, pkg_length, size,
+-        pkg_header);
++        ", header %02x, (*data)=0x%02x", pkg_seqnum, pkg_subseq, pkg_offset, pkg_length, size,
++        pkg_header, *data);
+ 
+     /* calc size of fragment */
+     if ((pkg_header & 0xc0) == 0x80) {
+@@ -2318,10 +2331,20 @@ gst_rmdemux_parse_video_packet (GstRMDemux * rmdemux, GstRMDemuxStream * stream,
+     }
+     GST_DEBUG_OBJECT (rmdemux, "fragment size %d", fragment_size);
+ 
+-    /* get the fragment */
+-    fragment =
+-        gst_buffer_copy_region (in, GST_BUFFER_COPY_ALL, data - map.data,
+-        fragment_size);
++    if (stream->fourcc == GST_RM_VDO_RV40){
++      if (((*data) & 0x80) == 0x80){
++	 ecc_flag = TRUE;
++	 stream->ecc_count++;
++	 GST_DEBUG_OBJECT (rmdemux, "RV40: stream->ecc_count: %d", stream->ecc_count);
++      }
++    }
++    else if (stream->fourcc == GST_RM_VDO_RV30){
++      if (((*data) & 0x20) == 0x20){
++	 ecc_flag = TRUE;
++	 stream->ecc_count++;
++	 GST_DEBUG_OBJECT (rmdemux, "RV30: stream->ecc_count: %d", stream->ecc_count);
++      }
++    }
+ 
+     if (pkg_subseq == 1) {
+       GST_DEBUG_OBJECT (rmdemux, "start new fragment");
+@@ -2329,15 +2352,23 @@ gst_rmdemux_parse_video_packet (GstRMDemux * rmdemux, GstRMDemuxStream * stream,
+       stream->frag_current = 0;
+       stream->frag_count = 0;
+       stream->frag_length = pkg_length;
++      stream->ecc_count = 0;
+     } else if (pkg_subseq == 0) {
+       GST_DEBUG_OBJECT (rmdemux, "non fragmented packet");
+       stream->frag_current = 0;
+       stream->frag_count = 0;
+       stream->frag_length = fragment_size;
++      stream->ecc_count = 0;
++    }
++
++    /* get the fragment and put fragment in adapter */
++    if (((stream->fourcc != GST_RM_VDO_RV40)&&(stream->fourcc != GST_RM_VDO_RV30))||(ecc_flag == FALSE)){
++      fragment =
++	         gst_buffer_copy_region (in, GST_BUFFER_COPY_ALL, data - map.data,
++	         fragment_size);
++      gst_adapter_push (stream->adapter, fragment);
+     }
+ 
+-    /* put fragment in adapter */
+-    gst_adapter_push (stream->adapter, fragment);
+     stream->frag_offset[stream->frag_count] = stream->frag_current;
+     stream->frag_current += fragment_size;
+     stream->frag_count++;
+@@ -2368,6 +2399,10 @@ gst_rmdemux_parse_video_packet (GstRMDemux * rmdemux, GstRMDemuxStream * stream,
+        * fragment offsets, both in ffmpeg and real .so, so we just give it that
+        * in front of the data.
+        */
++      if ((stream->fourcc == GST_RM_VDO_RV40) || (stream->fourcc == GST_RM_VDO_RV30)) {
++	 stream->frag_count -= stream->ecc_count;
++      }
++
+       header_size = 1 + (8 * (stream->frag_count));
+ 
+       GST_DEBUG_OBJECT (rmdemux,
+@@ -2430,6 +2465,7 @@ gst_rmdemux_parse_video_packet (GstRMDemux * rmdemux, GstRMDemuxStream * stream,
+       stream->frag_current = 0;
+       stream->frag_count = 0;
+       stream->frag_length = 0;
++      stream->ecc_count = 0;
+ 
+       if (timestamp != -1) {
+         if (rmdemux->first_ts != -1 && timestamp > rmdemux->first_ts)
+-- 
+1.9.1
+

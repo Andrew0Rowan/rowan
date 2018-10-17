@@ -1,0 +1,88 @@
+From e7c8b76afa0f2b29881222cc43fe6c2d2b9ee029 Mon Sep 17 00:00:00 2001
+From: Changtao Hu <changtao.hu@mediatek.com>
+Date: Thu, 22 Jun 2017 10:44:48 +0800
+Subject: [PATCH] gstreamer upgrade: audio bugs
+
+Make patch for gstreamer upgrade
+Test: OK
+
+Signed-off-by: Changtao Hu <changtao.hu@mediatek.com>
+CR-Id: AUTO00005189
+---
+ gst-libs/gst/audio/gstaudiobasesink.c |  4 ++--
+ gst-libs/gst/audio/gstaudiodecoder.c  | 14 ++++++++++++++
+ gst-libs/gst/audio/gstaudiodecoder.h  |  4 ++++
+ 3 files changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/gst-libs/gst/audio/gstaudiobasesink.c b/gst-libs/gst/audio/gstaudiobasesink.c
+index 62fab35..57c97d3 100644
+--- a/gst-libs/gst/audio/gstaudiobasesink.c
++++ b/gst-libs/gst/audio/gstaudiobasesink.c
+@@ -1777,8 +1777,8 @@ gst_audio_base_sink_get_alignment (GstAudioBaseSink * sink,
+         /* discont candidate */
+         sink->priv->discont_time = time;
+       } else if (time - sink->priv->discont_time >= sink->priv->discont_wait) {
+-        /* discont_wait expired, discontinuity detected */
+-        discont = TRUE;
++        /* discont_wait expired, discontinuity detected, not set discont avoid drop samples*/
++      /* discont = TRUE; */
+         sink->priv->discont_time = -1;
+       }
+     } else {
+diff --git a/gst-libs/gst/audio/gstaudiodecoder.c b/gst-libs/gst/audio/gstaudiodecoder.c
+index 8c43cbb..73c114c 100644
+--- a/gst-libs/gst/audio/gstaudiodecoder.c
++++ b/gst-libs/gst/audio/gstaudiodecoder.c
+@@ -483,6 +483,10 @@ gst_audio_decoder_init (GstAudioDecoder * dec, GstAudioDecoderClass * klass)
+   /* init state */
+   dec->priv->ctx.min_latency = 0;
+   dec->priv->ctx.max_latency = 0;
++
++  dec->ts_none = FALSE;
++  dec->sub_ts_none = FALSE;
++
+   gst_audio_decoder_reset (dec, TRUE);
+   GST_DEBUG_OBJECT (dec, "init ok");
+ }
+@@ -1292,6 +1296,10 @@ gst_audio_decoder_finish_frame (GstAudioDecoder * dec, GstBuffer * buf,
+   else
+     ts = GST_CLOCK_TIME_NONE;
+ 
++  if (dec->ts_none && !dec->sub_ts_none) {
++    ts = GST_CLOCK_TIME_NONE;
++  }
++
+   GST_DEBUG_OBJECT (dec, "leading frame ts %" GST_TIME_FORMAT,
+       GST_TIME_ARGS (ts));
+ 
+@@ -1534,6 +1542,12 @@ gst_audio_decoder_push_buffers (GstAudioDecoder * dec, gboolean force)
+       }
+       /* track upstream ts, but do not get stuck if nothing new upstream */
+       ts = gst_adapter_prev_pts (priv->adapter, &distance);
++
++      if (ts <= priv->prev_ts) {
++        dec->ts_none = TRUE;
++        dec->sub_ts_none = TRUE;
++      }
++
+       if (ts != priv->prev_ts || distance <= priv->prev_distance) {
+         priv->prev_ts = ts;
+         priv->prev_distance = distance;
+diff --git a/gst-libs/gst/audio/gstaudiodecoder.h b/gst-libs/gst/audio/gstaudiodecoder.h
+index f364161..0af5477 100644
+--- a/gst-libs/gst/audio/gstaudiodecoder.h
++++ b/gst-libs/gst/audio/gstaudiodecoder.h
+@@ -170,6 +170,10 @@ struct _GstAudioDecoder
+   GstSegment      input_segment;
+   GstSegment      output_segment;
+ 
++  /*set ts to GST_CLOCK_TIME_NONE flag*/
++  gboolean ts_none;
++  gboolean sub_ts_none;
++
+   /*< private >*/
+   GstAudioDecoderPrivate *priv;
+ 
+-- 
+1.9.1
+

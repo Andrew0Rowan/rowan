@@ -1,0 +1,26 @@
+meta-gplv2
+==========
+
+This layer contains a set of recipes corresponding to old, obsolete versions of
+software that are GPLv2 licensed where the upstreams have moved to GPLv3 licenses.
+
+These were part of OE-Core until it was realised they are a ticking timebomb
+with regard to security updates and general maintenance. By splitting into a separate
+layer, it's hoped people realise these may not be the best solution to the 
+"no GPLv3 problem" and it should also make it clear there is a different quality of
+service applied to these recipes.
+
+For now, they do continue to get minimal testing by the Yocto Project but this will
+eventually be stopped, with anyone wanting to use them taking up the maintainership.
+
+The current maintainer for the layer is Ross Burton <ross.burton@intel.com>
+
+Where to Send Patches
+=====================
+
+For now, patches should be sent to the Yocto mailing list with [meta-gplv2] in the subject 
+line. Before sending, be sure the patches apply cleanly to the current master branch of the 
+git repository.
+
+    Git repository: http://git.yoctoproject.org/cgit.cgi/meta-gplv2/
+    Mailing list: yocto@yoctoproject.org

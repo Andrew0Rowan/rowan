@@ -1,0 +1,12 @@
+usage
+
+1. ramdomizer.py:  in_image, out_image, randomizer_type, sec_reseed enable, page size, spare size, sector size, page per block, ppen, vendor
+e.g: python randomizer.py nand_storage_image/TC58TEG5DCJTA00_rand_off_ecc.bin nand_storage_image/random.bin 'SS' 1 16384 1280 1024 256 0 "TSB"
+
+2. gen_storage_image.py: NAND device name(reference nand_device_list.txt), in_image, out_image, rand_en
+e.g: python gen_storage_image.py F59D4G81A-45TG-18V nand_storage_image/GPT_2048_W1_64_FIT.bin nand_storage_image/F59D4G81A-45TG-18V-storage-image.bin 0
+
+3. gen_nand_header.py: NAND device name(reference nand_device_list.txt)
+e.g: python gen_nand_header.py TH58TFG8DDLAB4C
+
+If want to ignore .pyc file, please use python -B xxx.py

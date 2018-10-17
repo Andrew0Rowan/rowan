@@ -1,0 +1,10 @@
+[Unit]
+Description=nvram_daemon
+
+[Service]
+ExecStart=/sbin/nvram_daemon
+Type=simple
+
+[Install]
+Alias=nvramdaemon
+WantedBy=multi-user.target

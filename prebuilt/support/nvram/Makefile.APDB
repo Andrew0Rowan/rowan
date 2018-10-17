@@ -1,0 +1,9 @@
+
+all:
+install:
+	mkdir -p $(ROOT)/out
+	cp -af ./out/APDB $(ROOT)/out
+
+uninstall:
+	rm -rf $(ROOT)/out/
+

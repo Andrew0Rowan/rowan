@@ -1,0 +1,37 @@
+{
+    "alertsCapabilityAgent":{
+        "databaseFilePath":"/data/misc/dueros/alerts/alerts.db",
+        "downloadAssetsEnabled":false
+    },
+    "certifiedSender":{
+        "databaseFilePath":"/data/misc/dueros/certifiedSender.db"
+    },
+    "authDelegate":{
+        "clientId":"0G0cSPq0bLbDoQaHCi7e3cOcUXCikEll"
+    },
+    "dcsSdkLogger":{
+        "clickLogFilename":"/data/misc/dueros/click.log",
+        "clickLogUrl":"https://xiaodu.baidu.com/saiya/log?",
+        "dcsVelocityLogFilename":"/data/misc/dueros/dcsVelocity.log"
+    },
+    "libcurlUtils":{
+        "curloptCapath":"/etc/ssl/certs/",
+        "dcsSandbox":false
+    },
+    "dcssdkVersion":{
+        "version":"0.3.8"
+    },
+    "wakeup":{
+        "libraryVersion":"0.2.1",
+        "modelVersion":"0.2.2",
+        "commonWakeup":{
+            "kittResourceFilename":"/data/misc/dueros/resources/common.res",
+            "kittModelFilename":"/data/misc/dueros/resources/xiaoduxiaodu_all_10022017.umdl",
+            "keyWords":"小度小度,小度小度,小度小度",
+            "sensitivity":"0.35,0.35,0.45",
+            "musicSensitivity":"0.45,0.45,0.5",
+            "audioGain":2,
+            "frontEnd":true
+        }
+    }
+}

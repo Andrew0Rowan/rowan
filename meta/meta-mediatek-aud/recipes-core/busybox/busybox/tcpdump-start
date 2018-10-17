@@ -1,0 +1,12 @@
+#!/bin/sh
+
+SD_DIR=`mount | grep mmcblk1 | sed "s/^\/dev\/\(mmcblk1[p1]*\)[[:space:]]*.*$/\1/g"`
+RO=`mount | grep mmcblk1 | grep \(ro,`
+
+if [ -z "$SD_DIR" -o ! -z "$RO" ]; then
+	echo "sd card not found or readonly"
+	exit 1
+fi
+
+exec tcpdump -i any -C 100 -W 20 -w /run/media/${SD_DIR}/tcpdump.cap
+

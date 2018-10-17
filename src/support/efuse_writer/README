@@ -1,0 +1,3 @@
+The "yocto/src/support/efuse_writer" directory is intended for
+read/write efuse. To make this application work, the eFuse TA
+have to be implemented.

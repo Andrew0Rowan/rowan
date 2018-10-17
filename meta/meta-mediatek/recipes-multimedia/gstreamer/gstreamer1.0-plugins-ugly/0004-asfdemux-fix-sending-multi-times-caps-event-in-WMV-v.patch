@@ -1,0 +1,94 @@
+From 87bfead2dca35b2d68785d864379d8e56b3f68f0 Mon Sep 17 00:00:00 2001
+From: Xiaolei Gao <xiaolei.gao@mediatek.com>
+Date: Tue, 18 Oct 2016 14:26:08 +0800
+Subject: [PATCH] asfdemux: fix sending multi times caps event in WMV video
+
+fix sending multi times caps event
+Test: build and run on MT2701
+
+Signed-off-by: Xiaolei Gao <xiaolei.gao@mediatek.com>
+CR-Id: AUTO00001569
+---
+ gst/asfdemux/gstasfdemux.c | 23 +++++++++++++++++++----
+ gst/asfdemux/gstasfdemux.h |  1 +
+ 2 files changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/gst/asfdemux/gstasfdemux.c b/gst/asfdemux/gstasfdemux.c
+index 571912c..560b4a0 100644
+--- a/gst/asfdemux/gstasfdemux.c
++++ b/gst/asfdemux/gstasfdemux.c
+@@ -283,7 +283,8 @@ gst_asf_demux_reset (GstASFDemux * demux, gboolean chain_reset)
+   } else {
+     demux->base_offset = 0;
+   }
+-
++  demux->caps_flag = FALSE;
++  
+   g_slist_free (demux->other_streams);
+   demux->other_streams = NULL;
+ }
+@@ -1691,7 +1692,9 @@ gst_asf_demux_push_complete_payloads (GstASFDemux * demux, gboolean force)
+       stream->caps = gst_caps_make_writable (stream->caps);
+       gst_caps_set_simple (stream->caps, "pixel-aspect-ratio",
+           GST_TYPE_FRACTION, stream->par_x, stream->par_y, NULL);
+-      gst_pad_set_caps (stream->pad, stream->caps);
++	  if (strncmp(GST_PAD_NAME(stream->pad), "video_", strlen("video_")) != 0) {
++        gst_pad_set_caps (stream->pad, stream->caps);  
++	  }
+     }
+ 
+     if (G_UNLIKELY (stream->interlaced != payload->interlaced)) {
+@@ -1701,9 +1704,16 @@ gst_asf_demux_push_complete_payloads (GstASFDemux * demux, gboolean force)
+       stream->caps = gst_caps_make_writable (stream->caps);
+       gst_caps_set_simple (stream->caps, "interlace-mode", G_TYPE_BOOLEAN,
+           (stream->interlaced ? "mixed" : "progressive"), NULL);
+-      gst_pad_set_caps (stream->pad, stream->caps);
++	  if (strncmp(GST_PAD_NAME(stream->pad), "video_", strlen("video_")) != 0) {
++        gst_pad_set_caps (stream->pad, stream->caps);
++	  }
+     }
+ 
++	if (FALSE == demux->caps_flag && (!strncmp(GST_PAD_NAME(stream->pad), "video_", strlen("video_")))) {
++	  demux->caps_flag = TRUE;
++	  gst_pad_set_caps (stream->pad, stream->caps);
++	}
++
+     /* (sort of) interpolate timestamps using upstream "frame of reference",
+      * typically useful for live src, but might (unavoidably) mess with
+      * position reporting if a live src is playing not so live content
+@@ -2707,6 +2717,7 @@ gst_asf_demux_activate_stream (GstASFDemux * demux, AsfStream * stream)
+   if (!stream->active) {
+     GstEvent *event;
+     gchar *stream_id;
++	gchar *pad_name = NULL;
+ 
+     GST_INFO_OBJECT (demux, "Activating stream %2u, pad %s, caps %"
+         GST_PTR_FORMAT, stream->id, GST_PAD_NAME (stream->pad), stream->caps);
+@@ -2735,7 +2746,11 @@ gst_asf_demux_activate_stream (GstASFDemux * demux, AsfStream * stream)
+ 
+     gst_pad_push_event (stream->pad, event);
+     g_free (stream_id);
+-    gst_pad_set_caps (stream->pad, stream->caps);
++
++	pad_name = GST_PAD_NAME (stream->pad);
++	if (strncmp(pad_name, "video_", strlen("video_")) != 0) {
++	  gst_pad_set_caps (stream->pad, stream->caps);
++	}
+ 
+     gst_element_add_pad (GST_ELEMENT_CAST (demux), stream->pad);
+     gst_flow_combiner_add_pad (demux->flowcombiner, stream->pad);
+diff --git a/gst/asfdemux/gstasfdemux.h b/gst/asfdemux/gstasfdemux.h
+index a98e791..181c6c7 100644
+--- a/gst/asfdemux/gstasfdemux.h
++++ b/gst/asfdemux/gstasfdemux.h
+@@ -230,6 +230,7 @@ struct _GstASFDemux {
+ 
+   /* parsing 3D */
+   GstASF3DMode asf_3D_mode;
++  gboolean             caps_flag;
+ };
+ 
+ struct _GstASFDemuxClass {
+-- 
+1.9.1
+

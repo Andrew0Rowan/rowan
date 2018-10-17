@@ -1,0 +1,33 @@
+#!/bin/sh
+
+SD_DIR=`mount | grep mmcblk1 | sed "s/^\/dev\/\(mmcblk1[p1]*\)[[:space:]]*.*$/\1/g"`
+
+case "$1" in
+	start )
+		if [ -z $SD_DIR ]; then
+			echo "sd card not found"
+			exit 1
+		fi
+
+		if [ ! -d /run/media/$SD_DIR ]; then
+			echo "sd card not mount"
+			exit 2
+		fi
+
+		sncfg set debug.mdlogger.log2sd.path /run/media/$SD_DIR > /dev/null
+		echo 6 | eemcs_mdlogger_ctrl > /dev/null
+
+		echo "md log started successfully"
+		;;
+
+	stop )
+		echo 7 | eemcs_mdlogger_ctrl > /dev/null
+		echo "md log stopped successfully"
+		;;
+
+	* )
+		echo "Usage: $0 [start | stop]"
+		exit 3
+		;;
+esac
+

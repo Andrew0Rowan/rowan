@@ -1,0 +1,1229 @@
+From acdda313bd35124e71b0dbdb76fe8e9eb6ec7e18 Mon Sep 17 00:00:00 2001
+From: "jun.zeng" <jun.zeng@mediatek.com>
+Date: Tue, 30 Jan 2018 16:10:14 +0800
+Subject: [PATCH] gmrender
+
+---
+ src/Makefile.am        |   2 +-
+ src/dmr_ipc.c          | 201 +++++++++++++++++++++++++++++++++++++++++++++++++
+ src/dmr_ipc.h          |  22 ++++++
+ src/logging.c          |  19 +++++
+ src/logging.h          |  29 ++++++-
+ src/main.c             |  14 ++--
+ src/output.c           |  44 +++++++++--
+ src/output.h           |   1 +
+ src/output_gstreamer.c |  81 +++++++++++++++++++-
+ src/output_module.h    |   1 +
+ src/song-meta-data.c   |  28 +++++--
+ src/upnp_connmgr.c     |   9 ++-
+ src/upnp_control.c     |   4 +-
+ src/upnp_device.c      |  10 +--
+ src/upnp_transport.c   | 145 ++++++++++++++++++++++++++---------
+ src/webserver.c        |   8 +-
+ 16 files changed, 536 insertions(+), 82 deletions(-)
+ create mode 100644 src/dmr_ipc.c
+ create mode 100644 src/dmr_ipc.h
+
+diff --git a/src/Makefile.am b/src/Makefile.am
+index 00323cf..84103ba 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -1,6 +1,6 @@
+ bin_PROGRAMS = gmediarender
+ 
+-gmediarender_SOURCES = main.c git-version.h \
++gmediarender_SOURCES = main.c git-version.h dmr_ipc.h dmr_ipc.c \
+ 	upnp.c upnp_control.c upnp_connmgr.c  upnp_transport.c \
+ 	upnp.h upnp_control.h upnp_connmgr.h  upnp_transport.h \
+ 	song-meta-data.h song-meta-data.c \
+diff --git a/src/dmr_ipc.c b/src/dmr_ipc.c
+new file mode 100644
+index 0000000..e0c0176
+--- /dev/null
++++ b/src/dmr_ipc.c
+@@ -0,0 +1,201 @@
++#include "dmr_ipc.h"
++
++
++
++char buf_r[100];
++
++#define FIFO_TO_APP "/tmp/dlna_rev_fifo"
++#define FIFO_TO_DMR "/tmp/dlna_send_fifo"
++
++#define ipc_info(fmt...)  \
++	printf("[Gmrender_IPC | %s][%d]: ", __FUNCTION__, __LINE__); \
++	printf(fmt); \
++	printf("\n"); 
++
++struct ipc_notify {
++   int (*play)(struct action_event *event);	
++   int (*pause)(struct action_event *event);
++   int (*stop)(struct action_event *event);
++};
++
++struct ipc_notify* dmr_ipc_notify = NULL;
++
++static int recv_msg_from_app(void *arg)
++{
++	ipc_info("begin msg thread\n");
++	char buf_r[100];
++	int fd;  
++	int nread; 
++	if((mkfifo(FIFO_TO_DMR, O_CREAT | O_EXCL) < 0) && ( errno != EEXIST))
++	{
++		ipc_info("cann't craate fifoserver \n");
++	}
++
++	memset(buf_r, 0, sizeof(buf_r));
++
++	fd = open(FIFO_TO_DMR, O_RDONLY | O_NONBLOCK, 0);
++	if(-1 == fd)
++	{
++		ipc_info("open");
++		exit(1);
++	}
++	
++	while(1)
++	{
++		memset(buf_r, 0, sizeof(buf_r));
++		nread = read(fd, buf_r, 100);		
++		if (nread > 0 && dmr_ipc_notify != NULL)
++		{
++			if (0 == strcmp("0", buf_r))
++			{
++				ipc_info("recv stop msg from app\n");
++				dmr_ipc_notify->stop(NULL);
++			}else if (0 == strcmp("1", buf_r))
++			{
++				ipc_info("recv play msg from app\n");
++				dmr_ipc_notify->play(NULL);
++			}else if(0 == strcmp("2", buf_r))
++			{	
++				ipc_info("recv pause msg from app\n");
++				dmr_ipc_notify->pause(NULL);
++			}
++		}else if (dmr_ipc_notify == NULL)
++		{
++			ipc_info("dmr_ipc_notify is null\n");
++		}
++		sleep(1);
++	}
++	pause(); 
++	ipc_info("end msg thread\n");
++	return 0;
++}
++
++
++static int create_thread()
++{
++	pthread_t a_thread;
++	int res;
++	res = pthread_create(&a_thread, NULL, recv_msg_from_app, NULL);
++	if(res != 0)
++	{
++		ipc_info("Thread creation failed");
++		return -1;
++	}
++	return 0;
++}
++
++int InitIPC(void *play_func, void *pause_func, void *stop_func)
++{
++	if(access(FIFO_TO_APP, F_OK) == -1)
++	{
++		if(mkfifo(FIFO_TO_APP, 0777 ) < 0)
++		{
++			ipc_info("cann't craate FIFO_TO_APP file\n");
++			return -1;
++		}
++	}
++	if(access(FIFO_TO_DMR, F_OK) == -1)
++	{
++		if(mkfifo(FIFO_TO_DMR, 0777 ) < 0)
++		{
++			ipc_info("cann't craate FIFO_TO_DMR file\n");
++			return -1;
++		}
++	}
++	
++	dmr_ipc_notify = (struct ipc_notify *) malloc(sizeof(struct ipc_notify));
++	dmr_ipc_notify->play = play_func;
++	dmr_ipc_notify->pause = pause_func;
++	dmr_ipc_notify->stop = stop_func;
++	
++	create_thread();
++	ipc_info("exit from InitIPC()\n");
++	return 0;
++	
++}
++
++int ReadIPC(void)
++{
++	int fd = open(FIFO_TO_APP, O_WRONLY, 0);
++	if(-1 == fd)
++	{
++		ipc_info("open error\n");
++		return -1;
++	}
++	else
++	{
++		ipc_info("open sus, fd:%d\n", fd); 
++	}
++	int nread;	
++	while(1)
++	{
++		memset(buf_r, 0, sizeof(buf_r));
++		nread = read(fd, buf_r, 100);
++		ipc_info("read %s from FIFO\n", buf_r);
++		sleep(1);
++	}
++	close(fd);
++	return 0;
++}
++
++int WriteIPC(int int_status)
++{
++	int fd = open(FIFO_TO_APP, O_WRONLY, 0);
++	if(-1 == fd)
++	{
++		ipc_info("open error\n");
++		return -1;
++	}
++
++	int nwrite = 0;
++	char dmr_status = '0' + int_status;
++	if(-1 == (nwrite = write(fd, &dmr_status, 1)))
++	{
++		if(errno == EAGAIN)
++		{
++			ipc_info("Error, The FIFO has not been read yet, Please try later\n");
++			return -1;
++		}
++		else
++		{
++			ipc_info("write error\n");
++		}
++		
++	}
++	else
++	{		if ('0' == dmr_status)
++			{
++				ipc_info("send stop cmd to the APP\n");
++			}else if ('1' == dmr_status)
++			{
++				ipc_info("send play cmd to the APP\n");
++			}else if ('2' == dmr_status)
++			{
++				ipc_info("send pause cmd to the APP\n");
++			}else if ('3' == dmr_status)
++			{
++				ipc_info("send stopped done cmd to the APP\n");
++			}else if ('4' == dmr_status)
++			{
++				ipc_info("send played done cmd to the APP\n");
++			}else if ('5' == dmr_status)
++			{
++				ipc_info("send paused done cmd to the APP\n");
++			}
++	}
++	return 0;
++	close(fd);
++}
++
++
++int StopIPC(void)
++{
++	unlink(FIFO_TO_APP);	 
++	ipc_info(" stop finish\n");
++	if (NULL != dmr_ipc_notify)
++	{
++		dmr_ipc_notify = NULL;
++	}
++	return 0;
++}
++
+diff --git a/src/dmr_ipc.h b/src/dmr_ipc.h
+new file mode 100644
+index 0000000..398289b
+--- /dev/null
++++ b/src/dmr_ipc.h
+@@ -0,0 +1,22 @@
++#ifndef _DMRIPC_H
++#define _DMRIPC_H
++
++#include <sys/types.h>
++#include <sys/stat.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++
++#define FIFO_NAME "dmr_fifo"
++#define BUFFER_SIZE PIPE_BUF
++#define TEN_MEG (1024 * 1024 * 10)
++
++int InitIPC(void *play_func, void *pause_func, void *stop_func);
++int ReadIPC(void);
++int StopIPC(void);
++int WriteIPC(int int_status);
++
++#endif
+diff --git a/src/logging.c b/src/logging.c
+index 2d01477..e462d94 100644
+--- a/src/logging.c
++++ b/src/logging.c
+@@ -41,6 +41,7 @@
+ 
+ static int log_fd = -1;
+ static int enable_color = 0;
++int dlna_enable = 1;
+ 
+ static const char *const kInfoHighlight  = "\033[1mINFO  ";
+ static const char *const kErrorHighlight = "\033[1m\033[31mERROR ";
+@@ -78,6 +79,18 @@ int Log_color_allowed(void) { return enable_color; }
+ int Log_info_enabled(void) { return log_fd >= 0; }
+ int Log_error_enabled(void) { return 1; }
+ 
++void enable_dlna_log()
++{
++	if(access(DLNA_ENABLE_PATH, F_OK) != -1)
++	{
++		Log_info("Logging", "dlna log enable");
++		dlna_enable = 1;
++	}else
++	{
++		Log_info("Logging", "dlna log disable");
++		dlna_enable = 0;
++	}
++}
+ static void Log_internal(int fd, const char *markup_start,
+ 			 const char *category, const char *format,
+ 			 va_list ap) {
+@@ -106,6 +119,11 @@ static void Log_internal(int fd, const char *markup_start,
+ 	free(parts[1].iov_base);
+ }
+ 
++
++
++
++
++/*
+ void Log_info(const char *category, const char *format, ...) {
+ 	if (log_fd < 0) return;
+ 	va_list ap;
+@@ -121,3 +139,4 @@ void Log_error(const char *category, const char *format, ...) {
+ 		     error_markup_start_, category, format, ap);
+ 	va_end(ap);
+ }
++*/
+diff --git a/src/logging.h b/src/logging.h
+index 6e4cd19..3635ce9 100644
+--- a/src/logging.h
++++ b/src/logging.h
+@@ -35,9 +35,30 @@ int Log_color_allowed(void);  // Returns if we're allowed to use terminal color.
+ int Log_info_enabled(void);
+ int Log_error_enabled(void);
+ 
+-void Log_info(const char *category, const char *format, ...)
+-	PRINTF_FMT_CHECK(2, 3);
+-void Log_error(const char *category, const char *format, ...)
+-	PRINTF_FMT_CHECK(2, 3);
++#define DLNA_LOG_ENABLE 0
+ 
++#define Log_info(category, fmt...)  \
++	printf("[GMR_%s | I | %s][%d]: ", category, __FUNCTION__, __LINE__); \
++	printf(fmt); \
++	printf("\n"); 
++
++
++#define Log_error(category, fmt...) \
++	printf("[GMR_%s | E | %s][%d]: ", category, __FUNCTION__, __LINE__); \
++	printf(fmt); \
++	printf("\n"); 
++
++#define Log_debug(category, fmt...) \
++	if (DLNA_LOG_ENABLE) \
++	{\
++		printf("[GMR_%s | D | %s][%d]: ", category, __FUNCTION__, __LINE__); \
++		printf(fmt); \
++		printf("\n"); \
++	}
++
++#ifndef GMR_IPC
++#define GMR_IPC 1
++#endif
++
++#define DLNA_ENABLE_PATH "/data/dlna_enable"
+ #endif /* _LOGGING_H */
+diff --git a/src/main.c b/src/main.c
+index 7b25014..631d895 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -164,7 +164,7 @@ static void log_variable_change(void *userdata, int var_num,
+ 	// Silly terminal codes. Set to empty strings if not needed.
+ 	const char *var_start = Log_color_allowed() ? "\033[1m\033[34m" : "";
+ 	const char *var_end = Log_color_allowed() ? "\033[0m" : "";
+-	Log_info(category, "%s%s%s: %s%s",
++	Log_debug(category, "%s%s%s: %s%s",
+ 		 var_start, variable_name, var_end,
+ 		 variable_value, needs_newline ? "\n" : "");
+ }
+@@ -205,11 +205,10 @@ int main(int argc, char **argv)
+ #if !GLIB_CHECK_VERSION(2,32,0)
+ 	g_thread_init (NULL);  // Was necessary < glib 2.32, deprecated since.
+ #endif
+-
+ 	if (!process_cmdline(argc, argv)) {
+ 		return EXIT_FAILURE;
+ 	}
+-
++	
+ 	if (show_version) {
+ 		do_show_version();
+ 		exit(EXIT_SUCCESS);
+@@ -259,14 +258,12 @@ int main(int argc, char **argv)
+ 	if (upnp_renderer == NULL) {
+ 		return EXIT_FAILURE;
+ 	}
+-
+-	rc = output_init(output);
++	rc = output_init(NULL);
+ 	if (rc != 0) {
+ 		Log_error("main",
+ 			  "ERROR: Failed to initialize Output subsystem");
+ 		return EXIT_FAILURE;
+ 	}
+-
+ 	struct upnp_device *device;
+ 	if (listen_port != 0 &&
+ 	    (listen_port < 49152 || listen_port > 65535)) {
+@@ -306,14 +303,13 @@ int main(int argc, char **argv)
+ 
+ 	// Write both to the log (which might be disabled) and console.
+ 	Log_info("main", "Ready for rendering.");
+-	fprintf(stderr, "Ready for rendering.\n");
++	Log_info("main", "Ready for rendering.\n");
+ 
+ 	output_loop();
+ 
+ 	// We're here, because the loop exited. Probably due to catching
+ 	// a signal.
+-	Log_info("main", "Exiting.");
+ 	upnp_device_shutdown(device);
+-
++	Log_info("main", "Exiting.");
+ 	return EXIT_SUCCESS;
+ }
+diff --git a/src/output.c b/src/output.c
+index 451c6a3..0a575a2 100644
+--- a/src/output.c
++++ b/src/output.c
+@@ -50,6 +50,7 @@ static struct output_module *modules[] = {
+ #endif
+ };
+ 
++
+ static struct output_module *output_module = NULL;
+ 
+ void output_dump_modules(void)
+@@ -70,8 +71,27 @@ void output_dump_modules(void)
+ 	}
+ }
+ 
++int output_gst_init()
++{
++	if (output_module->init) {
++		return output_module->init();
++	}
++}
++
++int output_gst_destroy()
++{
++	if (output_module->destroy) {
++		return output_module->destroy();
++	}
++}
++
+ int output_init(const char *shortname)
+ {
++	if (output_module != NULL)
++	{	
++		Log_error("output", "[%s]: no need, already init\n");
++		return 0; 
++	}
+ 	int count;
+ 
+ 	count = sizeof(modules) / sizeof(struct output_module *);
+@@ -99,11 +119,11 @@ int output_init(const char *shortname)
+ 
+ 	Log_info("output", "Using output module: %s (%s)",
+ 		 output_module->shortname, output_module->description);
+-
+-	if (output_module->init) {
+-		return output_module->init();
++	
++	if (output_module->init)
++	{
++		output_module->init();
+ 	}
+-
+ 	return 0;
+ }
+ 
+@@ -148,6 +168,9 @@ int output_add_options(GOptionContext *ctx)
+ void output_set_uri(const char *uri, output_update_meta_cb_t meta_cb) {
+ 	if (output_module && output_module->set_uri) {
+ 		output_module->set_uri(uri, meta_cb);
++	}else
++	{
++		Log_error("output", "function pointer not be inited");
+ 	}
+ }
+ void output_set_next_uri(const char *uri) {
+@@ -158,7 +181,11 @@ void output_set_next_uri(const char *uri) {
+ 
+ int output_play(output_transition_cb_t transition_callback) {
+ 	if (output_module && output_module->play) {
++		output_module->init();
+ 		return output_module->play(transition_callback);
++	}else
++	{
++		Log_error("output", "function pointer not be inited");
+ 	}
+ 	return -1;
+ }
+@@ -172,7 +199,12 @@ int output_pause(void) {
+ 
+ int output_stop(void) {
+ 	if (output_module && output_module->stop) {
+-		return output_module->stop();
++		
++		output_module->stop();
++		return  output_module->destroy();		
++	}else
++	{
++		Log_error("output", "function pointer not be inited");
+ 	}
+ 	return -1;
+ }
+@@ -199,7 +231,7 @@ int output_get_volume(float *value) {
+ }
+ int output_set_volume(float value) {
+ 	if (output_module && output_module->set_volume) {
+-		return output_module->set_volume(value);
++		return output_module->set_volume(value * 10);
+ 	}
+ 	return -1;
+ }
+diff --git a/src/output.h b/src/output.h
+index 9230752..9134460 100644
+--- a/src/output.h
++++ b/src/output.h
+@@ -40,6 +40,7 @@ typedef void (*output_transition_cb_t)(enum PlayFeedback);
+ typedef void (*output_update_meta_cb_t)(const struct SongMetaData *);
+ 
+ int output_init(const char *shortname);
++int output_gst_init(void);
+ int output_add_options(GOptionContext *ctx);
+ void output_dump_modules(void);
+ 
+diff --git a/src/output_gstreamer.c b/src/output_gstreamer.c
+index 72b9dfc..81da3bb 100644
+--- a/src/output_gstreamer.c
++++ b/src/output_gstreamer.c
+@@ -40,6 +40,8 @@
+ #include "output_module.h"
+ #include "output_gstreamer.h"
+ 
++static gboolean gst_has_inited = FALSE;
++
+ static void scan_caps(const GstCaps * caps)
+ {
+ 	guint i;
+@@ -181,6 +183,11 @@ static void output_gstreamer_set_uri(const char *uri,
+ }
+ 
+ static int output_gstreamer_play(output_transition_cb_t callback) {
++	if (!gst_has_inited)
++	{
++		Log_info("gstreamer", "error, not init");
++		return -1;
++	}
+ 	play_trans_callback_ = callback;
+ 	if (get_current_player_state() != GST_STATE_PAUSED) {
+ 		if (gst_element_set_state(player_, GST_STATE_READY) ==
+@@ -188,6 +195,7 @@ static int output_gstreamer_play(output_transition_cb_t callback) {
+ 			Log_error("gstreamer", "setting play state failed (1)");
+ 			// Error, but continue; can't get worse :)
+ 		}
++		Log_info("gsteamer", "play url:%s", gsuri_);
+ 		g_object_set(G_OBJECT(player_), "uri", gsuri_, NULL);
+ 	}
+ 	if (gst_element_set_state(player_, GST_STATE_PLAYING) ==
+@@ -198,7 +206,27 @@ static int output_gstreamer_play(output_transition_cb_t callback) {
+ 	return 0;
+ }
+ 
++static int output_gstreamer_destroy(void)
++{
++	if (!gst_has_inited)
++	{
++		Log_info("gstreamer", "error, not init");
++		return -1;
++	}
++	SongMetaData_clear(&song_meta_);
++	gst_element_set_state(player_, GST_STATE_NULL);
++	gst_object_unref(GST_OBJECT (player_));
++	gst_has_inited = FALSE;
++	Log_info("gstreamer", "gstreamer destroy successfully");
++	return 0;
++}
++
+ static int output_gstreamer_stop(void) {
++	if (!gst_has_inited)
++	{
++		Log_info("gstreamer", "error, not init");
++		return -1;
++	}
+ 	if (gst_element_set_state(player_, GST_STATE_READY) ==
+ 	    GST_STATE_CHANGE_FAILURE) {
+ 		return -1;
+@@ -208,6 +236,11 @@ static int output_gstreamer_stop(void) {
+ }
+ 
+ static int output_gstreamer_pause(void) {
++	if (!gst_has_inited)
++	{
++		Log_info("gstreamer", "error, not init");
++		return -1;
++	}
+ 	if (gst_element_set_state(player_, GST_STATE_PAUSED) ==
+ 	    GST_STATE_CHANGE_FAILURE) {
+ 		return -1;
+@@ -217,6 +250,11 @@ static int output_gstreamer_pause(void) {
+ }
+ 
+ static int output_gstreamer_seek(gint64 position_nanos) {
++	if (!gst_has_inited)
++	{
++		Log_info("gstreamer", "error, not init");
++		return -1;
++	}
+ 	if (gst_element_seek(player_, 1.0, GST_FORMAT_TIME,
+ 			     GST_SEEK_FLAG_FLUSH,
+ 			     GST_SEEK_TYPE_SET, position_nanos,
+@@ -376,8 +414,8 @@ static gboolean my_bus_callback(GstBus * bus, GstMessage * msg,
+ 	return TRUE;
+ }
+ 
+-static gchar *audio_sink = NULL;
+-static gchar *audio_device = NULL;
++static gchar *audio_sink = "alsasink";
++static gchar *audio_device = "hw:0,0";
+ static gchar *videosink = NULL;
+ static double initial_db = 0.0;
+ 
+@@ -417,6 +455,10 @@ static int output_gstreamer_add_options(GOptionContext *ctx)
+ 
+ static int output_gstreamer_get_position(gint64 *track_duration,
+ 					 gint64 *track_pos) {
++	if (!gst_has_inited)
++	{
++		return -1;
++	}
+ 	*track_duration = last_known_time_.duration;
+ 	*track_pos = last_known_time_.position;
+ 
+@@ -446,6 +488,11 @@ static int output_gstreamer_get_position(gint64 *track_duration,
+ }
+ 
+ static int output_gstreamer_get_volume(float *v) {
++	if (!gst_has_inited)
++	{
++		Log_info("gstreamer", "error, not init");
++		return -1;
++	}
+ 	double volume;
+ 	g_object_get(player_, "volume", &volume, NULL);
+ 	Log_info("gstreamer", "Query volume fraction: %f", volume);
+@@ -453,17 +500,32 @@ static int output_gstreamer_get_volume(float *v) {
+ 	return 0;
+ }
+ static int output_gstreamer_set_volume(float value) {
++	if (!gst_has_inited)
++	{
++		Log_info("gstreamer", "error, not init");
++		return -1;
++	}
+ 	Log_info("gstreamer", "Set volume fraction to %f", value);
+ 	g_object_set(player_, "volume", (double) value, NULL);
+ 	return 0;
+ }
+ static int output_gstreamer_get_mute(int *m) {
++	if (!gst_has_inited)
++	{
++		Log_info("gstreamer", "error, not init");
++		return -1;
++	}
+ 	gboolean val;
+ 	g_object_get(player_, "mute", &val, NULL);
+ 	*m = val;
+ 	return 0;
+ }
+ static int output_gstreamer_set_mute(int m) {
++	if (!gst_has_inited)
++	{
++		Log_info("gstreamer", "error, not init");
++		return -1;
++	}
+ 	Log_info("gstreamer", "Set mute to %s", m ? "on" : "off");
+ 	g_object_set(player_, "mute", (gboolean) m, NULL);
+ 	return 0;
+@@ -486,8 +548,15 @@ static void prepare_next_stream(GstElement *obj, gpointer userdata) {
+ 	}
+ }
+ 
++
+ static int output_gstreamer_init(void)
+ {
++	
++	if (gst_has_inited)
++	{
++		Log_info("gstreamer", "no need, already init");
++		return -1;
++	}
+ 	GstBus *bus;
+ 
+ 	SongMetaData_init(&song_meta_);
+@@ -505,7 +574,7 @@ static int output_gstreamer_init(void)
+ 	bus = gst_pipeline_get_bus(GST_PIPELINE(player_));
+ 	gst_bus_add_watch(bus, my_bus_callback, NULL);
+ 	gst_object_unref(bus);
+-
++        
+ 	if (audio_sink != NULL) {
+ 		GstElement *sink = NULL;
+ 		Log_info("gstreamer", "Setting audio sink to %s; device=%s\n",
+@@ -521,6 +590,7 @@ static int output_gstreamer_init(void)
+ 		  g_object_set (G_OBJECT (player_), "audio-sink", sink, NULL);
+ 		}
+ 	}
++
+ 	if (videosink != NULL) {
+ 		GstElement *sink = NULL;
+ 		Log_info("gstreamer", "Setting video sink to %s", videosink);
+@@ -539,7 +609,9 @@ static int output_gstreamer_init(void)
+ 	if (initial_db < 0) {
+ 		output_gstreamer_set_volume(exp(initial_db / 20 * log(10)));
+ 	}
+-
++	
++	Log_info("gstreamer", "gstreamer init successfully");
++	gst_has_inited = TRUE;
+ 	return 0;
+ }
+ 
+@@ -547,6 +619,7 @@ struct output_module gstreamer_output = {
+         .shortname = "gst",
+ 	.description = "GStreamer multimedia framework",
+ 	.init        = output_gstreamer_init,
++	.destroy = output_gstreamer_destroy,
+ 	.add_options = output_gstreamer_add_options,
+ 	.set_uri     = output_gstreamer_set_uri,
+ 	.set_next_uri= output_gstreamer_set_next_uri,
+diff --git a/src/output_module.h b/src/output_module.h
+index d4250ef..9afa152 100644
+--- a/src/output_module.h
++++ b/src/output_module.h
+@@ -33,6 +33,7 @@ struct output_module {
+ 
+ 	// Commands.
+ 	int (*init)(void);
++	int (*destroy)(void);
+ 	void (*set_uri)(const char *uri, output_update_meta_cb_t meta_info);
+ 	void (*set_next_uri)(const char *uri);
+ 	int (*play)(output_transition_cb_t transition_callback);
+diff --git a/src/song-meta-data.c b/src/song-meta-data.c
+index 1727d2e..c6c3850 100644
+--- a/src/song-meta-data.c
++++ b/src/song-meta-data.c
+@@ -38,14 +38,26 @@ void SongMetaData_init(struct SongMetaData *value) {
+ 	memset(value, 0, sizeof(struct SongMetaData));
+ }
+ void SongMetaData_clear(struct SongMetaData *value) {
+-	free((char*)value->title);
+-	value->title = NULL;
+-	free((char*)value->artist);
+-	value->artist = NULL;
+-	free((char*)value->album);
+-	value->album = NULL;
+-	free((char*)value->genre);
+-	value->genre = NULL;
++	if (value->title != NULL)
++	{
++		free((char*)value->title);
++		value->title = NULL;
++	}
++	if (value->artist != NULL)
++	{
++		free((char*)value->artist);
++		value->artist = NULL;
++	}
++	if (value->album != NULL)
++	{
++		free((char*)value->album);
++		value->album = NULL;
++	}
++	if (value->genre != NULL)
++	{
++		free((char*)value->genre);
++		value->genre = NULL;
++	}
+ }
+ 
+ static const char kDidlHeader[] = "<DIDL-Lite "
+diff --git a/src/upnp_connmgr.c b/src/upnp_connmgr.c
+index 97257e7..9ccf258 100644
+--- a/src/upnp_connmgr.c
++++ b/src/upnp_connmgr.c
+@@ -198,7 +198,7 @@ static void register_mime_type_internal(const char *mime_type) {
+ 			return;
+ 		}
+ 	}
+-	Log_info("connmgr", "Registering support for '%s'", mime_type);
++	Log_debug("connmgr", "Registering support for '%s'", mime_type);
+ 
+ 	entry = malloc(sizeof(struct mime_type));
+ 	entry->mime_type = strdup(mime_type);
+@@ -207,6 +207,10 @@ static void register_mime_type_internal(const char *mime_type) {
+ }
+ 
+ void register_mime_type(const char *mime_type) {
++	if (strstr(mime_type, "audio/")== NULL)
++	{
++		return;
++	}
+ 	register_mime_type_internal(mime_type);
+ 	if (strcmp("audio/mpeg", mime_type) == 0) {
+ 		register_mime_type_internal("audio/x-mpeg");
+@@ -290,7 +294,6 @@ int connmgr_init(void) {
+ 		*p = '\0';
+ 	}
+ 	*p = '\0';
+-
+ 	VariableContainer_change(srv->variable_container,
+ 				 CONNMGR_VAR_SINK_PROTO_INFO, buf);
+ 	free(buf);
+@@ -328,7 +331,7 @@ static int get_current_conn_info(struct action_event *event)
+ 	if (value == NULL) {
+ 		return -1;
+ 	}
+-	Log_info("connmgr", "Query ConnectionID='%s'", value);
++	Log_debug("connmgr", "Query ConnectionID='%s'", value);
+ 
+ 	upnp_append_variable(event, CONNMGR_VAR_AAT_RCS_ID, "RcsID");
+ 	upnp_append_variable(event, CONNMGR_VAR_AAT_AVT_ID, "AVTransportID");
+diff --git a/src/upnp_control.c b/src/upnp_control.c
+index a1ad1cd..61b6db1 100644
+--- a/src/upnp_control.c
++++ b/src/upnp_control.c
+@@ -519,7 +519,7 @@ static int cmd_obtain_variable(struct action_event *event,
+ 	if (instance == NULL) {
+ 		return -1;
+ 	}
+-	Log_info("control", "%s: %s for instance %s\n",
++	Log_debug("control", "%s: %s for instance %s\n",
+ 		 __FUNCTION__, paramname, instance);
+ 
+ 	upnp_append_variable(event, varnum, paramname);
+@@ -611,6 +611,7 @@ static int get_mute(struct action_event *event)
+ }
+ 
+ static void set_mute_toggle(int do_mute) {
++	Log_info("upnp", "call output_set_mute");
+ 	replace_var(CONTROL_VAR_MUTE, do_mute ? "1" : "0");
+ 	output_set_mute(do_mute);
+ }
+@@ -792,6 +793,7 @@ void upnp_control_init(struct upnp_device *device) {
+ 
+ 	// Set initial volume.
+ 	float volume_fraction = 0;
++	Log_info("upnp", "call output_get_volume");
+ 	if (output_get_volume(&volume_fraction) == 0) {
+ 		Log_info("control", "Output inital volume is %f; setting "
+ 			 "control variables accordingly.", volume_fraction);
+diff --git a/src/upnp_device.c b/src/upnp_device.c
+index a31b420..729f4fd 100644
+--- a/src/upnp_device.c
++++ b/src/upnp_device.c
+@@ -161,8 +161,8 @@ static int handle_subscription_request(struct upnp_device *priv,
+ 
+ 	assert(priv != NULL);
+ 
+-	Log_info("upnp", "Subscription request for %s (%s)",
+-		 sr_event->ServiceId, sr_event->UDN);
++	Log_debug("upnp", "event:%p, Subscription request for %s (%s)",
++		 sr_event, sr_event->ServiceId, sr_event->UDN);
+ 
+ 	srv = find_service(priv->upnp_device_descriptor, sr_event->ServiceId);
+ 	if (srv == NULL) {
+@@ -203,7 +203,7 @@ static int handle_subscription_request(struct upnp_device *priv,
+ 	}
+ 	ithread_mutex_unlock(srv->service_mutex);
+ 	char *xml_value = UPnPLastChangeBuilder_to_xml(builder);
+-	Log_info("upnp", "Initial variable sync: %s", xml_value);
++	Log_debug("upnp", "event:%p, Initial variable sync: %s", sr_event, xml_value);
+ 	eventvar_values[0] = xmlescape(xml_value, 0);
+ 	free(xml_value);
+ 	UPnPLastChangeBuilder_delete(builder);
+@@ -341,7 +341,7 @@ static int handle_action_request(struct upnp_device *priv,
+ 				char *action_result_xml = NULL;
+ 				action_result_xml = ixmlDocumenttoString(
+ 						ar_event->ActionResult);
+-				Log_info("upnp", "Action '%s' OK; Response %s",
++				Log_debug("upnp", "Action '%s' OK; Response %s",
+ 					 ar_event->ActionName,
+ 					 action_result_xml);
+ 				free(action_result_xml);
+@@ -417,7 +417,7 @@ static gboolean initialize_device(struct upnp_device_descriptor *device_def,
+ 			  ip_address, port, UpnpGetErrorMessage(rc), rc);
+ 		return FALSE;
+ 	}
+-	Log_info("upnp", "Registered IP=%s port=%d\n",
++	Log_debug("upnp", "Registered IP=%s port=%d\n",
+ 		 UpnpGetServerIpAddress(), UpnpGetServerPort());
+ 
+ 	rc = UpnpEnableWebserver(TRUE);
+diff --git a/src/upnp_transport.c b/src/upnp_transport.c
+index f9c97fb..4de63ba 100644
+--- a/src/upnp_transport.c
++++ b/src/upnp_transport.c
+@@ -26,6 +26,7 @@
+ #endif
+ 
+ #include "upnp_transport.h"
++#include "dmr_ipc.h"
+ 
+ #define _GNU_SOURCE
+ #include <stdio.h>
+@@ -35,16 +36,16 @@
+ #include <assert.h>
+ 
+ #include <glib.h>
+-
+ #include <upnp/upnp.h>
+ #include <upnp/ithread.h>
+ 
+ #include "output.h"
+ #include "upnp.h"
++
+ #include "upnp_device.h"
+ #include "variable-container.h"
+ #include "xmlescape.h"
+-
++#include "logging.h"
+ #define TRANSPORT_TYPE "urn:schemas-upnp-org:service:AVTransport:1"
+ #define TRANSPORT_SERVICE_ID "urn:upnp-org:serviceId:AVTransport"
+ 
+@@ -56,6 +57,15 @@
+ #define TRANSPORT_EVENT_XML_NS "urn:schemas-upnp-org:metadata-1-0/AVT/"
+ 
+ typedef enum {
++	DLNA_STOP_REQ = 0,
++	DLNA_PLAY_REQ,
++	DLNA_PAUSE_REQ,
++	DLNA_STOP_DONE,
++	DLNA_PLAY_DONE,
++	DLNA_PUASE_DONE
++}DLNA_MSG;
++
++typedef enum {
+ 	TRANSPORT_VAR_TRANSPORT_STATUS,
+ 	TRANSPORT_VAR_NEXT_AV_URI,
+ 	TRANSPORT_VAR_NEXT_AV_URI_META,
+@@ -655,9 +665,15 @@ static int set_avtransport_uri(struct action_event *event)
+ 	if (uri == NULL) {
+ 		return -1;
+ 	}
++	if (TRANSPORT_STOPPED != transport_state_ && TRANSPORT_NO_MEDIA_PRESENT != transport_state_)
++	{
++		stop(NULL);
++	}
+ 
+ 	service_lock();
+ 	const char *meta = upnp_get_string(event, "CurrentURIMetaData");
++	Log_info("transport", "url : %s", uri);
++	Log_info("transport", "meta: %s", meta);
+ 	// Transport URI/Meta set now, current URI/Meta when it starts playing.
+ 	int requires_meta_update = replace_transport_uri_and_meta(uri, meta);
+ 
+@@ -669,12 +685,12 @@ static int set_avtransport_uri(struct action_event *event)
+ 		// current URI/Meta as well to reflect the state best.
+ 		replace_current_uri_and_meta(uri, meta);
+ 	}
+-
++	
++	Log_info("transport", "call output_set_uri");
+ 	output_set_uri(uri, (requires_meta_update
+ 			     ? update_meta_from_stream
+ 			     : NULL));
+ 	service_unlock();
+-
+ 	return 0;
+ }
+ 
+@@ -772,7 +788,7 @@ static void *thread_update_track_time(void *userdata) {
+ 	char tbuf[32];
+ 	gint64 last_duration = -1, last_position = -1;
+ 	for (;;) {
+-		usleep(500000);  // 500ms
++		usleep(1 * 1000 * 1000);  // 1000ms
+ 		service_lock();
+ 		gint64 duration, position;
+ 		const int pos_result = output_get_position(&duration, &position);
+@@ -787,6 +803,10 @@ static void *thread_update_track_time(void *userdata) {
+ 				replace_var(TRANSPORT_VAR_REL_TIME_POS, tbuf);
+ 				last_position = position / one_sec_unit;
+ 			}
++			if (TRANSPORT_STOPPED != transport_state_ && TRANSPORT_NO_MEDIA_PRESENT != transport_state_)
++			{
++				Log_debug("transport", "progress : %lld / %lld", last_position, last_duration / one_sec_unit);
++			}
+ 		}
+ 		service_unlock();
+ 	}
+@@ -822,16 +842,29 @@ static int get_device_caps(struct action_event *event)
+ 	return 0;
+ }
+ 
+-static int stop(struct action_event *event)
+-{
+-	if (obtain_instanceid(event, NULL) < 0) {
+-		return -1;
++int stop(struct action_event *event)
++{	
++	if (event != NULL)
++	{
++		if (obtain_instanceid(event, NULL) < 0) {
++			return -1;
++		}
++		if (TRANSPORT_STOPPED != transport_state_ 
++		&& TRANSPORT_NO_MEDIA_PRESENT != transport_state_)
++		{
++			Log_info("transport", "recv stop cmd from dmc");
++#if GMR_IPC
++			WriteIPC(DLNA_STOP_REQ);
++			return 0;
++#endif
++		}
+ 	}
+-
+ 	service_lock();
+ 	switch (transport_state_) {
+ 	case TRANSPORT_STOPPED:
+ 		// nothing to change.
++		Log_info("transport", "no need, already sttopped");
++		output_gst_destroy();
+ 		break;
+ 	case TRANSPORT_PLAYING:
+ 	case TRANSPORT_TRANSITIONING:
+@@ -839,19 +872,25 @@ static int stop(struct action_event *event)
+ 	case TRANSPORT_RECORDING:
+ 	case TRANSPORT_PAUSED_PLAYBACK:
+ 		output_stop();
++#if GMR_IPC
++		WriteIPC(DLNA_STOP_DONE);
++#endif
+ 		change_transport_state(TRANSPORT_STOPPED);
+ 		break;
+ 
+ 	case TRANSPORT_NO_MEDIA_PRESENT:
+-		/* action not allowed in these states - error 701 */
+-		upnp_set_error(event, UPNP_TRANSPORT_E_TRANSITION_NA,
++		/* action not allowed in these states - error 701 */		
++		output_gst_destroy();
++		if (event != NULL)
++		{
++			Log_info("transport", "no need, gmrender status : TRANSPORT_NO_MEDIA_PRESENT");
++			upnp_set_error(event, UPNP_TRANSPORT_E_TRANSITION_NA,
+ 			       "Transition to STOP not allowed; allowed=%s",
+ 			       get_var(TRANSPORT_VAR_CUR_TRANSPORT_ACTIONS));
+-
++		}
+ 		break;
+ 	}
+ 	service_unlock();
+-
+ 	return 0;
+ }
+ 
+@@ -877,12 +916,20 @@ static void inform_play_transition_from_output(enum PlayFeedback fb) {
+ 	service_unlock();
+ }
+ 
+-static int play(struct action_event *event)
++int play(struct action_event *event)
+ {
+-	if (obtain_instanceid(event, NULL) < 0) {
+-		return -1;
++	if (event != NULL)
++	{
++		if (obtain_instanceid(event, NULL) < 0) {
++			return -1;
++		}	
++		Log_info("transport", "recv play cmd from dmc");
++#if GMR_IPC
++		WriteIPC(DLNA_PLAY_REQ);	
++		return 0;
++#endif
+ 	}
+-
++	output_gst_init();
+ 	int rc = 0;
+ 	service_lock();
+ 	switch (transport_state_) {
+@@ -901,10 +948,16 @@ static int play(struct action_event *event)
+ 
+ 	case TRANSPORT_PAUSED_PLAYBACK:
+ 		if (output_play(&inform_play_transition_from_output)) {
+-			upnp_set_error(event, 704, "Playing failed");
+-			rc = -1;
++			if (event != NULL)
++			{
++				upnp_set_error(event, 704, "Playing failed");
++				rc = -1;
++			}
+ 		} else {
+-			change_transport_state(TRANSPORT_PLAYING);
++#if GMR_IPC
++			WriteIPC(DLNA_PLAY_DONE);	
++#endif
++		    change_transport_state(TRANSPORT_PLAYING);
+ 			const char *av_uri = get_var(TRANSPORT_VAR_AV_URI);
+ 			const char *av_meta = get_var(TRANSPORT_VAR_AV_URI_META);
+ 			replace_current_uri_and_meta(av_uri, av_meta);
+@@ -923,15 +976,22 @@ static int play(struct action_event *event)
+ 		break;
+ 	}
+ 	service_unlock();
+-
+ 	return rc;
+ }
+ 
+-static int pause_stream(struct action_event *event)
+-{
+-	if (obtain_instanceid(event, NULL) < 0) {
+-		return -1;
+-	}
++int pause_stream(struct action_event *event)
++{	
++	if (event != NULL)
++	{
++		if (obtain_instanceid(event, NULL) < 0) {
++			return -1;
++		}
++		Log_info("transport", "recv pause cmd from dmc");
++#if GMR_IPC
++		WriteIPC(DLNA_PAUSE_REQ);
++		return 0;
++#endif
++}
+ 
+ 	int rc = 0;
+ 	service_lock();
+@@ -942,22 +1002,30 @@ static int pause_stream(struct action_event *event)
+ 
+ 	case TRANSPORT_PLAYING:
+ 		if (output_pause()) {
+-			upnp_set_error(event, 704, "Pause failed");
+-			rc = -1;
++			if (event != NULL)
++			{
++				upnp_set_error(event, 704, "Pause failed");
++				rc = -1;
++			}
+ 		} else {
+-			change_transport_state(TRANSPORT_PAUSED_PLAYBACK);
++#if GMR_IPC
++		WriteIPC(DLNA_PUASE_DONE);
++#endif
++	change_transport_state(TRANSPORT_PAUSED_PLAYBACK);
+ 		}
+ 		break;
+ 
+-        default:
++    default:
++		if (event != NULL)
++		{
+ 		/* action not allowed in these states - error 701 */
+-		upnp_set_error(event, UPNP_TRANSPORT_E_TRANSITION_NA,
+-			       "Transition to PAUSE not allowed; allowed=%s",
+-			       get_var(TRANSPORT_VAR_CUR_TRANSPORT_ACTIONS));
+-		rc = -1;
+-        }
++			upnp_set_error(event, UPNP_TRANSPORT_E_TRANSITION_NA,
++		       "Transition to PAUSE not allowed; allowed=%s",
++		       get_var(TRANSPORT_VAR_CUR_TRANSPORT_ACTIONS));
++			rc = -1;
++		}
++    }
+ 	service_unlock();
+-
+ 	return rc;
+ }
+ 
+@@ -1036,6 +1104,9 @@ void upnp_transport_init(struct upnp_device *device) {
+ 					   TRANSPORT_VAR_ABS_CTR_POS);
+ 
+ 	pthread_t thread;
++#if GMR_IPC
++	InitIPC(play, pause_stream, stop);
++#endif
+ 	pthread_create(&thread, NULL, thread_update_track_time, NULL);
+ }
+ 
+diff --git a/src/webserver.c b/src/webserver.c
+index eaf0331..14e00e3 100644
+--- a/src/webserver.c
++++ b/src/webserver.c
+@@ -63,7 +63,7 @@ int webserver_register_buf(const char *path, const char *contents,
+ {
+ 	struct virtual_file *entry;
+ 
+-	Log_info("webserver", "Provide %s (%s) from buffer",
++	Log_debug("webserver", "Provide %s (%s) from buffer",
+ 		 path, content_type);
+ 
+ 	assert(path != NULL);
+@@ -94,7 +94,7 @@ int webserver_register_file(const char *path, const char *content_type)
+ 	snprintf(local_fname, sizeof(local_fname), "%s%s", PKG_DATADIR,
+ 	         strrchr(path, '/'));
+ 
+-	Log_info("webserver", "Provide %s (%s) from %s", path, content_type,
++	Log_debug("webserver", "Provide %s (%s) from %s", path, content_type,
+ 		 local_fname);
+ 
+ 	rc = stat(local_fname, &buf);
+@@ -154,14 +154,14 @@ static int webserver_get_info(const char *filename, struct File_Info *info)
+ 			info->is_readable = 1;
+ 			info->content_type =
+ 			    ixmlCloneDOMString(virtfile->content_type);
+-			Log_info("webserver", "Access %s (%s) len=%zd",
++			Log_debug("webserver", "Access %s (%s) len=%zd",
+ 				 filename, info->content_type, virtfile->len);
+ 			return 0;
+ 		}
+ 		virtfile = virtfile->next;
+ 	}
+ 
+-	Log_info("webserver", "404 Not found. (attempt to access "
++	Log_debug("webserver", "404 Not found. (attempt to access "
+ 		 "non-existent '%s')", filename);
+ 
+ 	return -1;
+-- 
+1.9.1
+

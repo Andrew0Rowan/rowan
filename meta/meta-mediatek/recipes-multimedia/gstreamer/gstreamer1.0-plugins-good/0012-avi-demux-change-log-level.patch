@@ -1,0 +1,47 @@
+From bab171f9d22558493b8e7a05d007c1d39dacc36b Mon Sep 17 00:00:00 2001
+From: Changtao Hu <changtao.hu@mediatek.com>
+Date: Mon, 4 Dec 2017 17:20:10 +0800
+Subject: [PATCH] avi demux: change log level
+
+change log level
+Test: OK
+
+Signed-off-by: Changtao Hu <changtao.hu@mediatek.com>
+CR-Id: AUTO00012406
+---
+ gst/avi/gstavidemux.c | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/gst/avi/gstavidemux.c b/gst/avi/gstavidemux.c
+index 06252b1..157b6dc 100755
+--- a/gst/avi/gstavidemux.c
++++ b/gst/avi/gstavidemux.c
+@@ -1969,18 +1969,18 @@ gst_avi_demux_check_caps (GstAviDemux * avi, GstAviStream * stream,
+   }
+   else if (gst_structure_has_name (s, "video/x-wmv")) {
+     if (gst_structure_has_field_typed (s, "format", G_TYPE_STRING)) {
+-	  gchar *format_value;
++      gchar *format_value;
+       gst_structure_get (s, "format", G_TYPE_STRING,
+           &format_value, NULL);
+ 
+-	  GST_ERROR_OBJECT (avi, "format=%s", format_value);
+-	  if ((!strcmp(format_value, "WVC1")) || (!strcmp(format_value, "wvc1"))
++      GST_DEBUG_OBJECT (avi, "format=%s", format_value);
++      if ((!strcmp(format_value, "WVC1")) || (!strcmp(format_value, "wvc1"))
+             || (!strcmp(format_value, "WMV3")) || (!strcmp(format_value, "wmv3"))) {
+-            GST_ERROR_OBJECT (avi, "remove field");
+-            gst_structure_remove_field (s, "codec_data");
+-	  }
++        GST_DEBUG_OBJECT (avi, "remove field");
++        gst_structure_remove_field (s, "codec_data");
++      }
+     }
+-    GST_ERROR_OBJECT (avi, "after checking caps %" GST_PTR_FORMAT, caps);
++    GST_DEBUG_OBJECT (avi, "after checking caps %" GST_PTR_FORMAT, caps);
+   }
+   else if (!gst_structure_has_name (s, "video/x-h264")) {
+     return caps;
+-- 
+1.9.1
+
